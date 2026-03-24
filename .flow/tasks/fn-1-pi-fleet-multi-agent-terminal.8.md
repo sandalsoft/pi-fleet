@@ -38,9 +38,8 @@ Implement the merge engine that combines specialist worktree branches back to th
 - [ ] merge_started, merge_completed, merge_conflict events emitted
 - [ ] Integration tests using real git repos in tmpdir with isolated git config (user.name/email, `git init -b main`)
 ## Done summary
-TBD
-
+Implemented merge engine with three-way conflict resolution: conflict-resolver.ts extracts base/ours/theirs from git index stages and resolves text conflicts via node-diff3, merger.ts performs sequential branch merging with --no-commit and automatic abort on failure, and integration.ts orchestrates the full flow with integration branch creation, drift detection with rebase, bounded 30s shutdown window, and merge event emission. Added 26 integration tests using real git repos in tmpdir with isolated config.
 ## Evidence
-- Commits:
-- Tests:
+- Commits: fba7aa45d6a94bc8a234c8d9eda61fdd66a494af
+- Tests: npm run test (307 passed), npm run typecheck (no new errors)
 - PRs:
