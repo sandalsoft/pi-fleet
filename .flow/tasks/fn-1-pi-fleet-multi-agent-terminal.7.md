@@ -33,9 +33,8 @@ Implement cost tracking from subprocess JSON output, budget/time enforcement wit
 - [ ] process.once() prevents double-fire signal handling
 - [ ] Tests verify threshold detection, warning emission, and shutdown sequencing
 ## Done summary
-TBD
-
+Implemented resource monitor with cost and time tracking: pricing.ts with static Opus/Sonnet/Haiku pricing table and contains-based model ID normalization, tracker.ts for per-agent cost accumulation emitting cost_update events, timer.ts for session/agent duration tracking, limits.ts with 80% soft warning (scratchpad injection) and 100% hard limit enforcement, and shutdown.ts with two-phase SIGTERM/SIGKILL graceful shutdown including bounded 30s merge safe window and process.once() signal handlers. Added 41 tests across four test files covering threshold detection, warning emission, shutdown sequencing, and pricing calculations.
 ## Evidence
-- Commits:
-- Tests:
+- Commits: 80d9adefeff0f52e94fed66816e356ece4a17796
+- Tests: npm test
 - PRs:
