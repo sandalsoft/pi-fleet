@@ -3,6 +3,16 @@ import fs from 'node:fs/promises'
 import type { ExtensionAPI, ExtensionCommandContext } from '@mariozechner/pi-coding-agent'
 import { preflightBootstrap, preflightRunChecks } from './preflight.js'
 import { runSetupWizard } from './setup/wizard.js'
+import { handleSteer } from './steer/handler.js'
+import { handleStatus } from './status/display.js'
+import { getFleetState } from './session/runtime-store.js'
+import { createEventLogReader } from './session/event-log.js'
+
+// Runtime-available APIs not yet in the ExtensionAPI type definitions.
+// These are documented in pi SDK examples (bookmark.ts, plan-mode/index.ts).
+type PiRuntime = ExtensionAPI & {
+	sendMessage?: (opts: Record<string, unknown>) => void
+}
 
 // Node.js >= 20 runtime guard
 const nodeMajor = parseInt(process.versions.node, 10)
@@ -67,8 +77,10 @@ export default function piFleet(pi: ExtensionAPI): void {
 	pi.registerCommand('fleet-status', {
 		description: 'Show current fleet session status',
 		handler: async (_args: string, ctx: ExtensionCommandContext) => {
-			ctx.ui.notify('Fleet status: no active session', 'info')
-			// Wired in task 10
+			const reader = createEventLogReader(() =>
+				Promise.resolve(ctx.sessionManager.getEntries() as Array<{ customType?: string; data?: unknown }>)
+			)
+			await handleStatus({ ctx, reader })
 		},
 	})
 
@@ -79,8 +91,22 @@ export default function piFleet(pi: ExtensionAPI): void {
 				ctx.ui.notify('Usage: /fleet-steer <agent-name> <message>', 'warning')
 				return
 			}
-			ctx.ui.notify(`Steering: ${args}`, 'info')
-			// Wired in task 10
+
+			const state = getFleetState()
+			if (!state || !state.repoRoot) {
+				ctx.ui.notify('No active fleet session. Start one with /fleet first.', 'warning')
+				return
+			}
+
+			const runtime = pi as PiRuntime
+			await handleSteer(args, {
+				repoRoot: state.repoRoot,
+				state,
+				ctx,
+				sendMessage: runtime.sendMessage
+					? async (opts) => { runtime.sendMessage!(opts) }
+					: undefined,
+			})
 		},
 	})
 }

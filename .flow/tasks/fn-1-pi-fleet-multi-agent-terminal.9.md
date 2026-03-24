@@ -33,9 +33,8 @@ Implement the agent-chain pipeline runner for deterministic sequential execution
 - [ ] Events emitted per chain step (specialist_started, specialist_completed/failed)
 - [ ] Tests verify $INPUT substitution, sequential execution, and failure handling
 ## Done summary
-TBD
-
+Implemented agent-chain pipeline runner with three modules: variable.ts for $INPUT substitution with truncation support, detector.ts for auto-detecting .pi/agent-chain.yaml and offering chain vs dispatcher mode selection, and runner.ts for sequential step execution with event emission, budget/time enforcement, and abort-on-failure. Added 32 tests covering substitution edge cases, detection logic, and full execution flow.
 ## Evidence
-- Commits:
-- Tests:
+- Commits: 2973ef05174149e4fb406bd07cd5565542ec76ad
+- Tests: npx vitest run (339 passed), npx tsc --noEmit (no new errors in chain files)
 - PRs:
