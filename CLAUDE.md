@@ -82,4 +82,4 @@ All configuration under `.pi/` relative to repo root:
 
 **Peer** (provided by pi host): `@mariozechner/pi-agent-core`, `@mariozechner/pi-coding-agent`
 
-**node-diff3 import**: CJS module, use `import diff3 from 'node-diff3'` then `diff3.diff3Merge(theirs, base, ours)`. Requires `esModuleInterop: true` in tsconfig.
+**node-diff3 import**: CJS module, use `import { diff3Merge } from 'node-diff3'` then `diff3Merge(theirs, base, ours)`. Requires `esModuleInterop: true` in tsconfig.

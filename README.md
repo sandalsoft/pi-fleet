@@ -2,7 +2,7 @@
 
 Multi-agent terminal orchestration extension for [pi](https://github.com/badlogic/pi-mono) coding agent.
 
-Define teams of specialist agents in YAML, run a structured interview to scope the work, and let pi-fleet dispatch agents in parallel -- each isolated in its own git worktree -- then merge results automatically. Also supports deterministic sequential pipelines via `agent-chain.yaml`.
+Define teams of specialist agents in YAML, run a structured interview to scope the work, and let pi-fleet dispatch agents in parallel -- each isolated in its own git worktree -- then merge results automatically. Also supports deterministic sequential pipelines via `.pi/agent-chain.yaml`.
 
 ## Install
 
