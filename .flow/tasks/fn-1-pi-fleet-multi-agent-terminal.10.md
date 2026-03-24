@@ -35,9 +35,8 @@ Implement the /fleet-steer command for mid-execution guidance routing and /fleet
 - [ ] Persistent footer status line updates on each cost_update event
 - [ ] Tests verify scratchpad steer routing, sendMessage path (mocked), and status formatting from both memory and event replay
 ## Done summary
-TBD
-
+Implemented /fleet-steer command handler with scratchpad steering (primary v1 mechanism) and sendMessage upgrade path, plus /fleet-status command with text-based table display from in-memory or event-replayed state. Added persistent footer status line via setStatus, Unicode box-drawing formatter, and path traversal protection. 44 new tests covering steer routing, format parsing, sendMessage mocking, and status rendering from both memory and replay sources.
 ## Evidence
-- Commits:
-- Tests:
+- Commits: 871a340c9d2cc48f0848693a59c4f46c43ad4c10
+- Tests: npx vitest run (383 passed), npx tsc --noEmit (no new errors)
 - PRs:
