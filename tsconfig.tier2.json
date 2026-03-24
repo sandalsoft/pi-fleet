@@ -1,0 +1,5 @@
+{
+	"extends": "./tsconfig.json",
+	"include": ["scripts/sdk-check-tier2.ts"],
+	"exclude": ["node_modules", "dist", "test", "src"]
+}

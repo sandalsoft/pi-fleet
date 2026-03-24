@@ -1,0 +1,48 @@
+{
+	"name": "pi-fleet",
+	"version": "0.1.0",
+	"description": "Multi-agent terminal orchestration harness for pi-agent",
+	"type": "module",
+	"pi": {
+		"extensions": ["./dist/extension.js"]
+	},
+	"keywords": ["pi-package", "pi-extension"],
+	"engines": {
+		"node": ">=20"
+	},
+	"main": "./dist/extension.js",
+	"scripts": {
+		"build": "tsx esbuild.config.ts",
+		"dev": "tsx esbuild.config.ts --watch",
+		"test": "vitest run",
+		"typecheck": "tsc -p tsconfig.json --noEmit",
+		"typecheck:tier2": "tsc --noEmit --project tsconfig.tier2.json || true",
+		"smoke": "tsx scripts/smoke.ts"
+	},
+	"dependencies": {
+		"@sinclair/typebox": "^0.34.0",
+		"node-diff3": "^3.1.2",
+		"p-limit": "^6.2.0",
+		"yaml": "^2.8.2",
+		"zod": "^3.24.0"
+	},
+	"peerDependencies": {
+		"@mariozechner/pi-agent-core": ">=0.60.0",
+		"@mariozechner/pi-coding-agent": ">=0.60.0",
+		"@sinclair/typebox": ">=0.34.0"
+	},
+	"peerDependenciesMeta": {
+		"@sinclair/typebox": {
+			"optional": true
+		}
+	},
+	"devDependencies": {
+		"@mariozechner/pi-agent-core": "^0.62.0",
+		"@mariozechner/pi-coding-agent": "^0.62.0",
+		"@types/node": "^22.0.0",
+		"esbuild": "^0.25.0",
+		"tsx": "^4.19.0",
+		"typescript": "^5.7.0",
+		"vitest": "^3.1.0"
+	}
+}

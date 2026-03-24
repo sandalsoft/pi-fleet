@@ -1,0 +1,5 @@
+node_modules/
+dist/
+.pi/scratchpads/
+.pi/smoke-results.json
+*.tsbuildinfo
