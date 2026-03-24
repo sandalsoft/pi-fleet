@@ -45,9 +45,8 @@ Implement the core orchestration loop: DAG-based task dependency resolution, wav
 - [ ] Spawner reads `preferredPromptMode` from smoke-results.json; falls back to dual-mode discovery if absent
 - [ ] Task assignments include `expectedPaths: string[]` for conservative wave sequencing; empty → sequential
 ## Done summary
-TBD
-
+Implemented DAG executor and dispatcher orchestration: Kahn's algorithm for topological wave computation with cycle detection and conservative path-overlap sequencing, pi subprocess spawner with dual-mode prompt delivery and tolerant JSONL parsing, prompt composer injecting agent identity + CLAUDE.md + AGENTS.md + task brief + scratchpad path, report consolidator with usage aggregation, and full dispatcher loop with p-limit concurrency control, AbortController timeouts, and FleetState event tracking. Added 45 tests across four test files covering task-graph, spawner, prompt-composer, and consolidator.
 ## Evidence
-- Commits:
-- Tests:
+- Commits: 38e14dcb75143f6e33872624d2ad8f9d195fd20e
+- Tests: npx vitest run (240 tests, 20 files), npx tsc -p tsconfig.json --noEmit (zero new errors)
 - PRs:
