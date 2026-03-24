@@ -39,11 +39,15 @@ function mockCtx(opts: MockUiOptions = {}): ExtensionCommandContext {
 
 	return {
 		ui: {
-			input: vi.fn(async (title: string, _desc: string, defaultVal?: string) => {
-				inputCalls.push(title)
-				return inputValues[title] ?? defaultVal ?? ''
+			input: vi.fn(async (prompt: string, _placeholder?: string) => {
+				inputCalls.push(prompt)
+				// Match on either the full prompt or partial key
+				for (const [key, val] of Object.entries(inputValues)) {
+					if (prompt.includes(key) || prompt === key) return val
+				}
+				return ''
 			}),
-			confirm: vi.fn(async (title: string) => {
+			confirm: vi.fn(async (title: string, _message?: string) => {
 				confirmCalls.push(title)
 				return confirmValues[title] ?? false
 			}),
@@ -77,7 +81,7 @@ describe('runSetupWizard', () => {
 	it('creates config when user selects all agents', async () => {
 		const pi = mockPi(tmpDir)
 		const ctx = mockCtx({
-			inputValues: { 'Team ID': 'test-team' },
+			inputValues: { 'team ID': 'test-team' },
 			confirmValues: {
 				'Agent selection': true, // use all agents
 				'Confirm setup': true,
@@ -100,7 +104,7 @@ describe('runSetupWizard', () => {
 	it('creates config with a subset of agents', async () => {
 		const pi = mockPi(tmpDir)
 		const ctx = mockCtx({
-			inputValues: { 'Team ID': 'small-team' },
+			inputValues: { 'team ID': 'small-team' },
 			confirmValues: {
 				'Agent selection': false, // don't use all
 				// Individual agent confirms - only architect and developer
@@ -133,7 +137,7 @@ describe('runSetupWizard', () => {
 	it('returns skipped when user cancels at team ID', async () => {
 		const pi = mockPi(tmpDir)
 		const ctx = mockCtx({
-			inputValues: { 'Team ID': '' }, // empty = cancel
+			inputValues: { 'team ID': '' }, // empty = cancel
 		})
 
 		const result = await runSetupWizard(pi, ctx)
@@ -143,7 +147,7 @@ describe('runSetupWizard', () => {
 	it('returns skipped when no agents are selected', async () => {
 		const pi = mockPi(tmpDir)
 		const ctx = mockCtx({
-			inputValues: { 'Team ID': 'test' },
+			inputValues: { 'team ID': 'test' },
 			confirmValues: {
 				'Agent selection': false,
 				'Include agent': false,
@@ -157,7 +161,7 @@ describe('runSetupWizard', () => {
 	it('returns skipped when user declines confirmation', async () => {
 		const pi = mockPi(tmpDir)
 		const ctx = mockCtx({
-			inputValues: { 'Team ID': 'test' },
+			inputValues: { 'team ID': 'test' },
 			confirmValues: {
 				'Agent selection': true,
 				'Confirm setup': false,
@@ -189,7 +193,7 @@ describe('runSetupWizard', () => {
 
 		const pi = mockPi(tmpDir)
 		const ctx = mockCtx({
-			inputValues: { 'Team ID': 'test' },
+			inputValues: { 'team ID': 'test' },
 			confirmValues: {
 				'Agent selection': true,
 				'Confirm setup': true,

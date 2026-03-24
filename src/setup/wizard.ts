@@ -50,8 +50,7 @@ export async function runSetupWizard(
 
 	// Step 1: Team ID
 	const teamId = await ctx.ui.input(
-		'Team ID',
-		'Choose a name for your team (used as an identifier in config):',
+		'Choose a team ID (used as identifier in config):',
 		'default'
 	)
 

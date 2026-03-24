@@ -34,9 +34,8 @@ Create project documentation: README.md with installation, commands, and workflo
 - [ ] README documents that fleet only reads repo-root AGENTS.md (nested AGENTS.md files ignored in v1)
 - [ ] README includes "Implemented v1 scope" section referencing PRD Reconciliation decisions
 ## Done summary
-TBD
-
+Created README.md following dorkestrator pattern with install, commands, configuration (teams.yaml/agents/chain YAML examples), architecture diagram, scratchpad gitignore tradeoff, in-extension spawn validation, PRD reconciliation, dependency bundling, worktree cleanup guidance, and AGENTS.md injection scope. Created concise CLAUDE.md with build/test commands, module structure, test conventions, and key patterns.
 ## Evidence
-- Commits:
-- Tests:
+- Commits: b2c53a4, 66be6c6
+- Tests: npx vitest run (383 passed)
 - PRs:

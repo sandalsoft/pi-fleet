@@ -27,7 +27,7 @@ export async function pruneStaleWorktrees(
  * or fleet/<agentName>-<sessionId>-<counter>
  * Returns the sessionId component, or null if not a fleet branch.
  */
-function parseFleetBranchSessionId(branch: string): string | null {
+export function parseFleetBranchSessionId(branch: string): string | null {
 	const branchName = branch.replace('refs/heads/', '')
 	if (!branchName.startsWith('fleet/')) return null
 

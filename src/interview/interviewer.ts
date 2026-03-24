@@ -124,12 +124,11 @@ async function askQuestion(
 			const options = question.options?.(interviewCtx) ?? []
 			return ctx.ui.select(
 				question.prompt,
-				options.map((o) => o.value),
 				options.map((o) => o.label)
 			)
 		}
 
 		case 'confirm':
-			return ctx.ui.confirm(question.prompt)
+			return ctx.ui.confirm('pi-fleet', question.prompt)
 	}
 }

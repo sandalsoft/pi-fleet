@@ -51,8 +51,8 @@ export async function composePrompt(opts: PromptComposerOpts): Promise<string> {
 	sections.push('# Your Task\n')
 	sections.push(taskBrief)
 
-	// 5. Scratchpad
-	const scratchpadPath = path.join(scratchpadDir, `${agent.frontmatter.name}.md`)
+	// 5. Scratchpad (use agent.id — filename stem — not display name, so it matches /fleet-steer writes)
+	const scratchpadPath = path.join(scratchpadDir, `${agent.id}.md`)
 	sections.push('# Scratchpad\n')
 	sections.push(
 		`Write your working notes, intermediate findings, and status updates to: ${scratchpadPath}`
