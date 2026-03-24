@@ -32,9 +32,8 @@ Create the 6 pre-built agent templates and the interactive setup wizard that boo
 - [ ] Handles partial config state (agents exist but no teams.yaml, etc.)
 - [ ] Tests verify template front matter validates against Zod schemas from task 1
 ## Done summary
-TBD
-
+Created 6 agent templates (architect/opus, developer/sonnet, reviewer/opus, researcher/sonnet, qa/sonnet, devops/haiku) with validated front matter and scratchpad instructions. Built interactive setup wizard that detects missing config, walks users through team creation via pi UI methods, and scaffolds .pi/teams.yaml + .pi/agents/ + .pi/agent-chain.yaml from templates. Handles partial config state and preserves existing user customizations.
 ## Evidence
-- Commits:
-- Tests:
+- Commits: f5a19dede22f9fb0774a68dafe826ded9d1e0fa1
+- Tests: npx vitest run
 - PRs:
