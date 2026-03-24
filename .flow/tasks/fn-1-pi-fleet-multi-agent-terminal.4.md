@@ -33,9 +33,8 @@ Implement the interview engine that conducts 8-12 questions via pi UI to underst
 - [ ] Tests verify team selection logic with various interview answer combinations
 - [ ] Tests verify cancellation handling
 ## Done summary
-TBD
-
+Implemented interview engine with adaptive 8-12 question flow via pi UI methods (input/select/confirm), question bank with condition-based filtering, graceful cancellation handling with session_aborted events, team selector that generates TaskAssignment[] with expectedPaths from interview answers, and DAG wave builder using topological sort with path-overlap analysis for parallel-safe execution scheduling.
 ## Evidence
-- Commits:
-- Tests:
+- Commits: 0034dcce8fe044bf4ddfe1dc3d525ac99b682dfa
+- Tests: npx vitest run
 - PRs:
