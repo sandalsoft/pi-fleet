@@ -1,0 +1,10 @@
+name: research-build-review
+steps:
+  - agent: researcher
+    prompt: "Analyze the codebase for $INPUT. Identify relevant files, patterns, and dependencies."
+  - agent: architect
+    prompt: "Based on the research findings, design a solution for $INPUT. Specify file changes and interfaces."
+  - agent: developer
+    prompt: "Implement the design from the architect. Write tests for all new code."
+  - agent: reviewer
+    prompt: "Review all changes made by the developer. Check correctness, security, and test coverage."

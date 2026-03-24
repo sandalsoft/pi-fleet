@@ -1,0 +1,18 @@
+team_id: default
+orchestrator:
+  model: claude-sonnet-4-20250514
+  skills:
+    - planning
+    - delegation
+members:
+  - architect
+  - developer
+  - reviewer
+  - researcher
+  - qa
+  - devops
+constraints:
+  max_usd: 10
+  max_minutes: 30
+  task_timeout_ms: 120000
+  max_concurrency: 4

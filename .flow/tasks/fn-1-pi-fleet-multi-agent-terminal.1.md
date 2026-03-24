@@ -91,9 +91,8 @@ Set up the pi-fleet extension project structure and implement the configuration 
 - [ ] preflightBootstrap() resolves repoRoot; preflightRunChecks() handles dirty tree (separate function, not mode param)
 - [ ] Detached HEAD detected via `git symbolic-ref -q HEAD`; "no commits" via `git rev-parse --verify HEAD`
 ## Done summary
-TBD
-
+Project scaffold with package.json (pi extension manifest, ESM, Node >= 20), esbuild config, extension entry registering /fleet /fleet-status /fleet-steer stubs, Zod-validated config loaders (teams.yaml strict with snake_case-to-camelCase transform, agents/*.md with parseFrontmatter passthrough, agent-chain.yaml), two-function preflight system (preflightBootstrap + preflightRunChecks), tiered SDK surface validation, runtime smoke script, vendored JSONL fixture, and node-diff3 ESM interop test with documented argument ordering. 46 vitest tests across 6 files all passing.
 ## Evidence
-- Commits:
-- Tests:
+- Commits: bee25e11a715ffda8e08dc95739a17ee42e2f6e1
+- Tests: npx vitest run, npm run typecheck, npm run typecheck:tier2, npm run build
 - PRs:

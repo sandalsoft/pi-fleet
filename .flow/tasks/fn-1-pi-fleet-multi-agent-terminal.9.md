@@ -16,7 +16,8 @@ Implement the agent-chain pipeline runner for deterministic sequential execution
 ## Key context
 
 - Canonical chain config path: `.pi/agent-chain.yaml` (NOT root-level agent-chain.yaml) — all fleet config under .pi/
-- agent-chain.yaml schema: name, description, steps[] where each step has: agent (name), task (prompt with $INPUT), model (optional override), tools (optional restriction)
+<!-- Updated by plan-sync: fn-1-pi-fleet-multi-agent-terminal.1 built ChainSchema with steps[].prompt (not task), no description field, no model/tools per step -->
+- agent-chain.yaml schema as built by task 1: `name`, `steps[]` where each step has: `agent` (string), `prompt` (optional string, for $INPUT substitution). Note: task 1's ChainSchema does not include `description` at chain level or `model`/`tools` per step — if those are needed, extend ChainStepSchema in this task
 - Chain mode reuses a single worktree (sequential, not parallel) — simpler than dispatcher mode
 - Chain detection happens during the interview phase — integrate with interviewer.ts from task 4
 - The chain runner shares the spawner from task 6 for subprocess management

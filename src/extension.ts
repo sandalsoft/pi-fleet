@@ -2,6 +2,7 @@ import path from 'node:path'
 import fs from 'node:fs/promises'
 import type { ExtensionAPI, ExtensionCommandContext } from '@mariozechner/pi-coding-agent'
 import { preflightBootstrap, preflightRunChecks } from './preflight.js'
+import { runSetupWizard } from './setup/wizard.js'
 
 // Node.js >= 20 runtime guard
 const nodeMajor = parseInt(process.versions.node, 10)
@@ -31,12 +32,16 @@ export default function piFleet(pi: ExtensionAPI): void {
 			}
 
 			if (!teamsExist) {
-				ctx.ui.notify(
-					'No .pi/teams.yaml found. Run the setup wizard to create a team configuration.',
-					'info'
-				)
-				// Setup wizard will be wired in task 2
-				return
+				const wizardResult = await runSetupWizard(pi, ctx)
+				if (wizardResult.skipped) return
+
+				// After wizard, teams.yaml now exists. Re-check before continuing.
+				try {
+					await fs.access(teamsPath)
+				} catch {
+					ctx.ui.notify('Setup did not create teams.yaml. Aborting.', 'warning')
+					return
+				}
 			}
 
 			// Dirty tree gating (separate function, reuses repoRoot)

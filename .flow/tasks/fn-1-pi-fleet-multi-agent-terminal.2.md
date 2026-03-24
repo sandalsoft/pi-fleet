@@ -11,7 +11,8 @@ Create the 6 pre-built agent templates and the interactive setup wizard that boo
 - Default models: Architect → opus, Developer → sonnet, Reviewer → opus, Researcher → sonnet, QA → sonnet, DevOps → haiku
 - Template teams.yaml: references all 6 agents, sets sensible defaults for constraints using snake_case YAML keys matching task 1's canonical schema (max_usd: 10, max_minutes: 30, task_timeout_ms: 120000, max_concurrency: 4). All YAML templates must use snake_case — camelCase only exists in TypeScript types after Zod transform.
 - Template agent-chain.yaml: simple example pipeline (Researcher → Architect → Developer → Reviewer)
-- Setup wizard: triggered when /fleet detects no .pi/teams.yaml. Calls `preflight({ mode: "bootstrap" })` — validates git repo and shallow clone but allows missing config files (the wizard creates them). Uses ctx.ui.select/confirm/input to walk user through team creation
+<!-- Updated by plan-sync: fn-1-pi-fleet-multi-agent-terminal.1 uses preflightBootstrap({ pi }) not preflight({ mode: "bootstrap" }) -->
+- Setup wizard: triggered when /fleet detects no .pi/teams.yaml. Calls `preflightBootstrap({ pi })` (from `src/preflight.ts`) — validates git repo and shallow clone but allows missing config files (the wizard creates them). Uses ctx.ui.select/confirm/input to walk user through team creation
 - Scaffolder: copies templates to .pi/teams.yaml and .pi/agents/, creating directories as needed
 - Handle partial state: if .pi/agents/ exists but teams.yaml doesn't (or vice versa), detect and fix
 
