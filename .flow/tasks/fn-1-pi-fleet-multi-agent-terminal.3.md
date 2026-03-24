@@ -46,9 +46,8 @@ Define the fleet event schema as a versioned discriminated union and implement s
 - [ ] All FleetEvent payloads are JSON-serializable (test: JSON.stringify(event) does not throw, required fields preserved)
 - [ ] runtime-store.ts: module-level singleton with getFleetState/setFleetState/clearFleetState; /fleet sets, /fleet-steer and /fleet-status read
 ## Done summary
-TBD
-
+Implemented fleet event schema with two-layer Zod parsing (envelope + per-type schemas), 17 known event types with forward-compatible unknown event preservation, FleetState reconstruction via Array.reduce(), event log reader/writer wrapping pi.appendEntry/getEntries, module-level runtime store singleton, and resume module that detects incomplete sessions and identifies interrupted agents. All payloads are JSON-serializable with specialist events carrying agentName/runId/pid/worktreePath/model for routing and status display.
 ## Evidence
-- Commits:
-- Tests:
+- Commits: 83c373c11a67b8a0b833edb0d14b4350ec08112e
+- Tests: npx vitest run
 - PRs:
