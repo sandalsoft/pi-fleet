@@ -1,10 +1,10 @@
-import type { ExtensionCommandContext } from '@mariozechner/pi-coding-agent'
+import type { ExtensionAPI, ExtensionCommandContext } from '@mariozechner/pi-coding-agent'
 import type { WorktreeManager, WorktreeInfo } from './manager.js'
 
 export interface WorktreePoolOptions {
 	manager: WorktreeManager
 	baseBranch: string
-	poolSize?: number
+	pi: ExtensionAPI
 }
 
 interface PoolEntry {
@@ -15,18 +15,20 @@ interface PoolEntry {
 /**
  * Pool of pre-created worktrees with acquire/release semantics.
  *
- * Reuses released worktrees by checking out a fresh branch from the base commit.
+ * Reuses released worktrees by resetting them to the base branch state.
  * Tracks in-use state to prevent double-allocation.
  */
 export class WorktreePool {
 	private readonly manager: WorktreeManager
 	private readonly baseBranch: string
+	private readonly pi: ExtensionAPI
 	private readonly entries: PoolEntry[] = []
 	private preCreateCounter = 0
 
 	constructor(opts: WorktreePoolOptions) {
 		this.manager = opts.manager
 		this.baseBranch = opts.baseBranch
+		this.pi = opts.pi
 	}
 
 	/**
@@ -55,7 +57,8 @@ export class WorktreePool {
 	/**
 	 * Acquire a worktree for an agent.
 	 *
-	 * If a free worktree exists in the pool, reuse it. Otherwise, create a new one.
+	 * If a free worktree exists in the pool, reuse it by resetting its
+	 * git state to the base branch. Otherwise, create a new one.
 	 * The returned worktree is marked as in-use until released.
 	 */
 	async acquire(
@@ -66,6 +69,15 @@ export class WorktreePool {
 		const free = this.entries.find((e) => !e.inUse)
 		if (free) {
 			free.inUse = true
+			// Reset worktree to base branch state for a clean starting point
+			await this.pi.exec('git', [
+				'-C',
+				free.info.worktreePath,
+				'checkout',
+				'-B',
+				free.info.branch,
+				this.baseBranch,
+			])
 			// Update the info to reflect the new agent owner
 			free.info = { ...free.info, agentName }
 			return free.info

@@ -82,7 +82,11 @@ describe('WorktreePool', () => {
 		)
 		cleanupDirs.push(wtRoot)
 
-		const pool = new WorktreePool({ manager, baseBranch: 'main' })
+		const pool = new WorktreePool({
+			manager,
+			baseBranch: 'main',
+			pi: pi as never,
+		})
 
 		// Acquire
 		const info = await pool.acquire('developer')
@@ -98,7 +102,7 @@ describe('WorktreePool', () => {
 		await pool.destroyAll()
 	})
 
-	it('reuses released worktrees', async () => {
+	it('reuses released worktrees with git state reset', async () => {
 		const repoDir = await createTempRepo()
 		cleanupDirs.push(repoDir)
 		const pi = realPiExec(repoDir)
@@ -114,7 +118,11 @@ describe('WorktreePool', () => {
 		)
 		cleanupDirs.push(wtRoot)
 
-		const pool = new WorktreePool({ manager, baseBranch: 'main' })
+		const pool = new WorktreePool({
+			manager,
+			baseBranch: 'main',
+			pi: pi as never,
+		})
 
 		// Acquire and release
 		const first = await pool.acquire('developer')
@@ -127,6 +135,13 @@ describe('WorktreePool', () => {
 
 		// Pool size should still be 1
 		expect(pool.size).toBe(1)
+
+		// Verify that git checkout was called to reset state
+		const checkoutCalls = pi.exec.mock.calls.filter(
+			(call: [string, string[]]) =>
+				call[0] === 'git' && call[1].includes('checkout')
+		)
+		expect(checkoutCalls.length).toBeGreaterThanOrEqual(1)
 
 		await pool.destroyAll()
 	})
@@ -147,7 +162,11 @@ describe('WorktreePool', () => {
 		)
 		cleanupDirs.push(wtRoot)
 
-		const pool = new WorktreePool({ manager, baseBranch: 'main' })
+		const pool = new WorktreePool({
+			manager,
+			baseBranch: 'main',
+			pi: pi as never,
+		})
 
 		// Acquire first
 		const first = await pool.acquire('developer')
@@ -162,7 +181,7 @@ describe('WorktreePool', () => {
 		await pool.destroyAll()
 	})
 
-	it('pre-creates worktrees', async () => {
+	it('pre-creates worktrees and serves from pool without new git calls', async () => {
 		const repoDir = await createTempRepo()
 		cleanupDirs.push(repoDir)
 		const pi = realPiExec(repoDir)
@@ -178,20 +197,35 @@ describe('WorktreePool', () => {
 		)
 		cleanupDirs.push(wtRoot)
 
-		const pool = new WorktreePool({ manager, baseBranch: 'main' })
+		const pool = new WorktreePool({
+			manager,
+			baseBranch: 'main',
+			pi: pi as never,
+		})
 		await pool.preCreate(2)
 
 		expect(pool.size).toBe(2)
 		expect(pool.getAvailable()).toHaveLength(2)
 		expect(pool.getInUse()).toHaveLength(0)
 
-		// Acquire should come from the pool without creating new worktrees
-		const execCallsBefore = pi.exec.mock.calls.length
+		// Count git worktree add calls before acquire
+		const worktreeAddCalls = pi.exec.mock.calls.filter(
+			(call: [string, string[]]) =>
+				call[0] === 'git' && call[1].includes('worktree') && call[1].includes('add')
+		)
+		const addCountBefore = worktreeAddCalls.length
+
+		// Acquire should come from pool (no new worktree add)
 		const info = await pool.acquire('developer')
-		// Should not have called git worktree add again (only mkdir + worktree add during preCreate)
-		// The acquire used a free slot from the pool
 		expect(info.agentName).toBe('developer')
 		expect(pool.getAvailable()).toHaveLength(1)
+
+		// No new worktree add calls (only checkout for reset)
+		const addCountAfter = pi.exec.mock.calls.filter(
+			(call: [string, string[]]) =>
+				call[0] === 'git' && call[1].includes('worktree') && call[1].includes('add')
+		).length
+		expect(addCountAfter).toBe(addCountBefore)
 
 		await pool.destroyAll()
 	})
@@ -224,7 +258,11 @@ describe('WorktreePool', () => {
 			},
 		}
 
-		const pool = new WorktreePool({ manager, baseBranch: 'main' })
+		const pool = new WorktreePool({
+			manager,
+			baseBranch: 'main',
+			pi: pi as never,
+		})
 		await pool.preCreate(2, ctx as never)
 
 		expect(ctx.ui.setWorkingMessage).toHaveBeenCalledWith(
@@ -255,7 +293,11 @@ describe('WorktreePool', () => {
 		)
 		cleanupDirs.push(wtRoot)
 
-		const pool = new WorktreePool({ manager, baseBranch: 'main' })
+		const pool = new WorktreePool({
+			manager,
+			baseBranch: 'main',
+			pi: pi as never,
+		})
 		await pool.acquire('dev')
 		await pool.acquire('qa')
 		expect(pool.size).toBe(2)

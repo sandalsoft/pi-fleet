@@ -152,7 +152,7 @@ describe('cleanup functions', () => {
 		await currentManager.cleanupAll()
 	})
 
-	it('fullCleanup prunes and removes stale worktrees', async () => {
+	it('fullCleanup prunes and removes stale worktrees and their branches', async () => {
 		const repoDir = await createTempRepo()
 		cleanupDirs.push(repoDir)
 		const pi = realPiExec(repoDir)
@@ -169,7 +169,7 @@ describe('cleanup functions', () => {
 			`${path.basename(repoDir)}-fleet-worktrees`
 		)
 		cleanupDirs.push(wtRoot)
-		await oldManager.createWorktree('developer', 'main')
+		const staleInfo = await oldManager.createWorktree('developer', 'main')
 
 		// New session runs fullCleanup
 		const newManager = new WorktreeManager({
@@ -181,6 +181,9 @@ describe('cleanup functions', () => {
 		const result = await fullCleanup(newManager, 'new-session')
 		expect(result.pruned).toBe(true)
 		expect(result.removedCount).toBe(1)
+
+		// Verify the stale worktree directory is gone
+		await expect(fs.stat(staleInfo.worktreePath)).rejects.toThrow()
 	})
 
 	it('fullCleanup is safe when no stale worktrees exist', async () => {

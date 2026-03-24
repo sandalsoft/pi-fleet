@@ -27,6 +27,26 @@ export interface WorktreeManagerOptions {
 }
 
 /**
+ * Sanitize an agent name into a safe slug for use in branch names and paths.
+ * Rejects path separators and traversal sequences; allows only [a-zA-Z0-9-_].
+ */
+export function sanitizeAgentName(name: string): string {
+	if (name.includes('/') || name.includes('\\') || name.includes('..')) {
+		throw new Error(
+			`Invalid agent name "${name}": must not contain path separators or ".." sequences`
+		)
+	}
+	const slug = name.replace(/[^a-zA-Z0-9\-_]/g, '-')
+	if (slug.length === 0) {
+		throw new Error(`Invalid agent name "${name}": produces empty slug after sanitization`)
+	}
+	if (slug.length > 64) {
+		throw new Error(`Invalid agent name "${name}": exceeds 64 character limit`)
+	}
+	return slug
+}
+
+/**
  * Resolves the worktree root directory. Tries a sibling directory
  * next to the repo first; falls back to OS tmpdir if that fails.
  */
@@ -71,8 +91,9 @@ class Mutex {
 /**
  * Higher-level API for creating and managing git worktrees.
  *
- * Branch naming: fleet/<agentName>-<sessionId>
+ * Branch naming: fleet/<agentName>-<sessionId>-<counter>
  * Worktree location: always outside the repo (sibling dir or OS tmpdir).
+ * All git commands use -C repoRoot for explicit working directory.
  */
 export class WorktreeManager {
 	private readonly repoRoot: string
@@ -83,6 +104,7 @@ export class WorktreeManager {
 	private readonly activeWorktrees = new Map<string, WorktreeInfo>()
 	private worktreeRoot: string | null = null
 	private shutdownRegistered = false
+	private worktreeCounter = 0
 
 	constructor(opts: WorktreeManagerOptions) {
 		this.repoRoot = opts.repoRoot
@@ -92,16 +114,24 @@ export class WorktreeManager {
 	}
 
 	/**
+	 * Execute a git command rooted at repoRoot.
+	 * Always uses -C to avoid CWD dependence.
+	 */
+	private async git(args: string[]): Promise<ExecResult> {
+		return this.pi.exec('git', ['-C', this.repoRoot, ...args]) as Promise<ExecResult>
+	}
+
+	/**
 	 * Pre-flight: validate we're in a git repo and detect shallow clone.
 	 * Should be called before any worktree operations.
 	 */
 	async validateGitRepo(): Promise<void> {
-		const gitDir = await this.pi.exec('git', ['rev-parse', '--git-dir'])
+		const gitDir = await this.git(['rev-parse', '--git-dir'])
 		if (gitDir.code !== 0) {
 			throw new Error('Not inside a git repository. Cannot manage worktrees.')
 		}
 
-		const shallow = await this.pi.exec('git', ['rev-parse', '--is-shallow-repository'])
+		const shallow = await this.git(['rev-parse', '--is-shallow-repository'])
 		if (shallow.stdout.trim() === 'true') {
 			throw new Error(
 				'Shallow clone detected. Worktree operations require full git history. Run: git fetch --unshallow'
@@ -162,16 +192,20 @@ export class WorktreeManager {
 		baseBranch: string,
 		ctx?: ExtensionCommandContext
 	): Promise<WorktreeInfo> {
+		const safeName = sanitizeAgentName(agentName)
+
 		if (ctx) {
-			ctx.ui.setWorkingMessage(`Creating worktree for ${agentName}...`)
+			ctx.ui.setWorkingMessage(`Creating worktree for ${safeName}...`)
 		}
 
 		const root = await this.ensureWorktreeRoot()
-		const branch = `fleet/${agentName}-${this.sessionId}`
-		const wtPath = path.join(root, `${agentName}-${this.sessionId}`)
+		this.worktreeCounter++
+		const suffix = this.worktreeCounter
+		const branch = `fleet/${safeName}-${this.sessionId}-${suffix}`
+		const wtPath = path.join(root, `${safeName}-${this.sessionId}-${suffix}`)
 
 		// Create the worktree with a new branch from the base
-		const result = await this.pi.exec('git', [
+		const result = await this.git([
 			'worktree',
 			'add',
 			'-b',
@@ -182,12 +216,12 @@ export class WorktreeManager {
 
 		if (result.code !== 0) {
 			throw new Error(
-				`Failed to create worktree for ${agentName}: ${result.stderr.trim()}`
+				`Failed to create worktree for ${safeName}: ${result.stderr.trim()}`
 			)
 		}
 
 		const info: WorktreeInfo = {
-			agentName,
+			agentName: safeName,
 			branch,
 			worktreePath: wtPath,
 			createdAt: new Date().toISOString(),
@@ -199,7 +233,7 @@ export class WorktreeManager {
 		if (this.eventLog) {
 			const event = createFleetEvent<WorktreeCreatedEvent>({
 				type: 'worktree_created',
-				agentName,
+				agentName: safeName,
 				worktreePath: wtPath,
 			})
 			await this.eventLog.append(event)
@@ -214,11 +248,14 @@ export class WorktreeManager {
 
 	/**
 	 * Remove a specific worktree and its branch.
+	 * Handles both active (tracked) worktrees and foreign ones by
+	 * resolving the branch from git porcelain output when not in activeWorktrees.
 	 */
-	async removeWorktree(wtPath: string): Promise<void> {
+	async removeWorktree(wtPath: string, knownBranch?: string): Promise<void> {
 		const info = this.activeWorktrees.get(wtPath)
+		const branchToDelete = info?.branch ?? knownBranch ?? (await this._resolveBranchForPath(wtPath))
 
-		const removeResult = await this.pi.exec('git', [
+		const removeResult = await this.git([
 			'worktree',
 			'remove',
 			'--force',
@@ -232,11 +269,22 @@ export class WorktreeManager {
 			)
 		}
 
-		// Clean up the branch too
-		if (info) {
-			await this.pi.exec('git', ['branch', '-D', info.branch])
-			this.activeWorktrees.delete(wtPath)
+		// Clean up the branch
+		if (branchToDelete) {
+			const bareRef = branchToDelete.replace(/^refs\/heads\//, '')
+			await this.git(['branch', '-D', bareRef])
 		}
+
+		this.activeWorktrees.delete(wtPath)
+	}
+
+	/**
+	 * Resolve the branch name for a worktree path by parsing git porcelain output.
+	 */
+	private async _resolveBranchForPath(wtPath: string): Promise<string | null> {
+		const all = await this.listAllWorktrees()
+		const match = all.find((w) => w.path === wtPath)
+		return match?.branch ?? null
 	}
 
 	/**
@@ -281,7 +329,7 @@ export class WorktreeManager {
 	 * Should be called on startup and shutdown.
 	 */
 	async pruneStaleWorktrees(): Promise<void> {
-		await this.pi.exec('git', ['worktree', 'prune'])
+		await this.git(['worktree', 'prune'])
 	}
 
 	/**
@@ -296,7 +344,7 @@ export class WorktreeManager {
 	 * Uses git worktree list --porcelain for machine-parseable output.
 	 */
 	async listAllWorktrees(): Promise<Array<{ path: string; branch: string | null }>> {
-		const result = await this.pi.exec('git', ['worktree', 'list', '--porcelain'])
+		const result = await this.git(['worktree', 'list', '--porcelain'])
 		if (result.code !== 0) return []
 
 		const entries: Array<{ path: string; branch: string | null }> = []

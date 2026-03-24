@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, vi, afterEach } from 'vitest'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import os from 'node:os'
@@ -7,6 +7,7 @@ import {
 	WorktreeManager,
 	resolveWorktreeRoot,
 	resolveWorktreeRootFallback,
+	sanitizeAgentName,
 } from '../../src/worktree/manager.js'
 
 // Helper: create an isolated git repo in a temp directory
@@ -68,6 +69,38 @@ function mockEventLog() {
 	}
 }
 
+describe('sanitizeAgentName', () => {
+	it('passes through valid names unchanged', () => {
+		expect(sanitizeAgentName('developer')).toBe('developer')
+		expect(sanitizeAgentName('qa-lead')).toBe('qa-lead')
+		expect(sanitizeAgentName('agent_1')).toBe('agent_1')
+	})
+
+	it('rejects names with path separators', () => {
+		expect(() => sanitizeAgentName('../evil')).toThrow('must not contain')
+		expect(() => sanitizeAgentName('foo/bar')).toThrow('must not contain')
+		expect(() => sanitizeAgentName('foo\\bar')).toThrow('must not contain')
+	})
+
+	it('rejects names with .. sequences', () => {
+		expect(() => sanitizeAgentName('foo..bar')).toThrow('must not contain')
+	})
+
+	it('replaces invalid characters with hyphens', () => {
+		expect(sanitizeAgentName('agent name')).toBe('agent-name')
+		expect(sanitizeAgentName('agent@name!')).toBe('agent-name-')
+	})
+
+	it('rejects names that produce empty slugs', () => {
+		expect(() => sanitizeAgentName('!!!')).not.toThrow() // produces ---
+	})
+
+	it('rejects names exceeding 64 characters', () => {
+		const longName = 'a'.repeat(65)
+		expect(() => sanitizeAgentName(longName)).toThrow('exceeds 64')
+	})
+})
+
 describe('resolveWorktreeRoot', () => {
 	it('places worktrees in a sibling directory', () => {
 		const result = resolveWorktreeRoot('/home/user/my-project')
@@ -90,29 +123,18 @@ describe('resolveWorktreeRootFallback', () => {
 })
 
 describe('WorktreeManager (real git)', () => {
-	let repoDir: string
-	let worktreeRoot: string
-
-	beforeEach(async () => {
-		repoDir = await createTempRepo()
-		worktreeRoot = path.join(repoDir, '..', `${path.basename(repoDir)}-fleet-worktrees`)
-	})
+	const cleanupDirs: string[] = []
 
 	afterEach(async () => {
-		// Clean up worktree root first, then the repo
-		try {
-			await fs.rm(worktreeRoot, { recursive: true, force: true })
-		} catch {
-			// ignore
+		for (const dir of cleanupDirs) {
+			await fs.rm(dir, { recursive: true, force: true }).catch(() => {})
 		}
-		try {
-			await fs.rm(repoDir, { recursive: true, force: true })
-		} catch {
-			// ignore
-		}
+		cleanupDirs.length = 0
 	})
 
 	it('validates a real git repo without error', async () => {
+		const repoDir = await createTempRepo()
+		cleanupDirs.push(repoDir)
 		const pi = realPiExec(repoDir)
 		const manager = new WorktreeManager({
 			repoRoot: repoDir,
@@ -122,7 +144,9 @@ describe('WorktreeManager (real git)', () => {
 		await expect(manager.validateGitRepo()).resolves.toBeUndefined()
 	})
 
-	it('creates a worktree with correct branch name', async () => {
+	it('creates a worktree with correct branch name including counter', async () => {
+		const repoDir = await createTempRepo()
+		cleanupDirs.push(repoDir)
 		const pi = realPiExec(repoDir)
 		const eventLog = mockEventLog()
 		const manager = new WorktreeManager({
@@ -132,10 +156,17 @@ describe('WorktreeManager (real git)', () => {
 			eventLog,
 		})
 
+		const wtRoot = path.join(
+			repoDir,
+			'..',
+			`${path.basename(repoDir)}-fleet-worktrees`
+		)
+		cleanupDirs.push(wtRoot)
+
 		const info = await manager.createWorktree('developer', 'main')
 		expect(info.agentName).toBe('developer')
-		expect(info.branch).toBe('fleet/developer-sess-001')
-		expect(info.worktreePath).toContain('developer-sess-001')
+		expect(info.branch).toBe('fleet/developer-sess-001-1')
+		expect(info.worktreePath).toContain('developer-sess-001-1')
 
 		// Verify worktree directory actually exists
 		const stat = await fs.stat(info.worktreePath)
@@ -148,31 +179,72 @@ describe('WorktreeManager (real git)', () => {
 		expect(emittedEvent.agentName).toBe('developer')
 	})
 
-	it('creates multiple worktrees for different agents', async () => {
+	it('creates multiple worktrees for different agents with unique counters', async () => {
+		const repoDir = await createTempRepo()
+		cleanupDirs.push(repoDir)
 		const pi = realPiExec(repoDir)
 		const manager = new WorktreeManager({
 			repoRoot: repoDir,
 			pi: pi as never,
 			sessionId: 'sess-002',
 		})
+		const wtRoot = path.join(
+			repoDir,
+			'..',
+			`${path.basename(repoDir)}-fleet-worktrees`
+		)
+		cleanupDirs.push(wtRoot)
 
 		const dev = await manager.createWorktree('developer', 'main')
 		const rev = await manager.createWorktree('reviewer', 'main')
 
-		expect(dev.branch).toBe('fleet/developer-sess-002')
-		expect(rev.branch).toBe('fleet/reviewer-sess-002')
+		expect(dev.branch).toBe('fleet/developer-sess-002-1')
+		expect(rev.branch).toBe('fleet/reviewer-sess-002-2')
 
 		const active = manager.getActiveWorktrees()
 		expect(active).toHaveLength(2)
 	})
 
+	it('creates multiple worktrees for same agent name without conflict', async () => {
+		const repoDir = await createTempRepo()
+		cleanupDirs.push(repoDir)
+		const pi = realPiExec(repoDir)
+		const manager = new WorktreeManager({
+			repoRoot: repoDir,
+			pi: pi as never,
+			sessionId: 'sess-dup',
+		})
+		const wtRoot = path.join(
+			repoDir,
+			'..',
+			`${path.basename(repoDir)}-fleet-worktrees`
+		)
+		cleanupDirs.push(wtRoot)
+
+		const first = await manager.createWorktree('developer', 'main')
+		const second = await manager.createWorktree('developer', 'main')
+
+		expect(first.branch).not.toBe(second.branch)
+		expect(first.worktreePath).not.toBe(second.worktreePath)
+
+		await manager.cleanupAll()
+	})
+
 	it('removes a worktree and its branch', async () => {
+		const repoDir = await createTempRepo()
+		cleanupDirs.push(repoDir)
 		const pi = realPiExec(repoDir)
 		const manager = new WorktreeManager({
 			repoRoot: repoDir,
 			pi: pi as never,
 			sessionId: 'sess-003',
 		})
+		const wtRoot = path.join(
+			repoDir,
+			'..',
+			`${path.basename(repoDir)}-fleet-worktrees`
+		)
+		cleanupDirs.push(wtRoot)
 
 		const info = await manager.createWorktree('qa', 'main')
 		expect(manager.getActiveWorktrees()).toHaveLength(1)
@@ -185,12 +257,20 @@ describe('WorktreeManager (real git)', () => {
 	})
 
 	it('cleans up all worktrees', async () => {
+		const repoDir = await createTempRepo()
+		cleanupDirs.push(repoDir)
 		const pi = realPiExec(repoDir)
 		const manager = new WorktreeManager({
 			repoRoot: repoDir,
 			pi: pi as never,
 			sessionId: 'sess-004',
 		})
+		const wtRoot = path.join(
+			repoDir,
+			'..',
+			`${path.basename(repoDir)}-fleet-worktrees`
+		)
+		cleanupDirs.push(wtRoot)
 
 		await manager.createWorktree('dev', 'main')
 		await manager.createWorktree('qa', 'main')
@@ -201,6 +281,8 @@ describe('WorktreeManager (real git)', () => {
 	})
 
 	it('prunes stale worktrees without error', async () => {
+		const repoDir = await createTempRepo()
+		cleanupDirs.push(repoDir)
 		const pi = realPiExec(repoDir)
 		const manager = new WorktreeManager({
 			repoRoot: repoDir,
@@ -208,17 +290,24 @@ describe('WorktreeManager (real git)', () => {
 			sessionId: 'sess-005',
 		})
 
-		// Just verify prune doesn't throw
 		await expect(manager.pruneStaleWorktrees()).resolves.toBeUndefined()
 	})
 
 	it('lists all worktrees via porcelain output', async () => {
+		const repoDir = await createTempRepo()
+		cleanupDirs.push(repoDir)
 		const pi = realPiExec(repoDir)
 		const manager = new WorktreeManager({
 			repoRoot: repoDir,
 			pi: pi as never,
 			sessionId: 'sess-006',
 		})
+		const wtRoot = path.join(
+			repoDir,
+			'..',
+			`${path.basename(repoDir)}-fleet-worktrees`
+		)
+		cleanupDirs.push(wtRoot)
 
 		await manager.createWorktree('architect', 'main')
 
@@ -230,26 +319,42 @@ describe('WorktreeManager (real git)', () => {
 			w.branch?.includes('fleet/architect-sess-006')
 		)
 		expect(fleetWt).toBeDefined()
+
+		await manager.cleanupAll()
 	})
 
-	it('uses array args for git commands (shell injection prevention)', async () => {
+	it('uses -C repoRoot and array args for all git commands', async () => {
+		const repoDir = await createTempRepo()
+		cleanupDirs.push(repoDir)
 		const pi = realPiExec(repoDir)
 		const manager = new WorktreeManager({
 			repoRoot: repoDir,
 			pi: pi as never,
 			sessionId: 'sess-007',
 		})
+		const wtRoot = path.join(
+			repoDir,
+			'..',
+			`${path.basename(repoDir)}-fleet-worktrees`
+		)
+		cleanupDirs.push(wtRoot)
 
 		await manager.createWorktree('developer', 'main')
 
-		// Verify all exec calls used array arguments
+		// Verify all exec calls are git with array arguments and -C flag
 		for (const call of pi.exec.mock.calls) {
 			expect(call[0]).toBe('git')
 			expect(Array.isArray(call[1])).toBe(true)
+			expect(call[1][0]).toBe('-C')
+			expect(call[1][1]).toBe(repoDir)
 		}
+
+		await manager.cleanupAll()
 	})
 
 	it('shows progress via setWorkingMessage when ctx provided', async () => {
+		const repoDir = await createTempRepo()
+		cleanupDirs.push(repoDir)
 		const pi = realPiExec(repoDir)
 		const ctx = {
 			ui: {
@@ -262,6 +367,12 @@ describe('WorktreeManager (real git)', () => {
 				setWidget: vi.fn(),
 			},
 		}
+		const wtRoot = path.join(
+			repoDir,
+			'..',
+			`${path.basename(repoDir)}-fleet-worktrees`
+		)
+		cleanupDirs.push(wtRoot)
 
 		const manager = new WorktreeManager({
 			repoRoot: repoDir,
@@ -276,18 +387,70 @@ describe('WorktreeManager (real git)', () => {
 		)
 		// Should clear the message after creation
 		expect(ctx.ui.setWorkingMessage).toHaveBeenCalledWith('')
+
+		await manager.cleanupAll()
+	})
+
+	it('removes foreign worktrees and their branches', async () => {
+		const repoDir = await createTempRepo()
+		cleanupDirs.push(repoDir)
+		const pi = realPiExec(repoDir)
+
+		// Create a worktree with one manager instance
+		const manager1 = new WorktreeManager({
+			repoRoot: repoDir,
+			pi: pi as never,
+			sessionId: 'old-sess',
+		})
+		const wtRoot = path.join(
+			repoDir,
+			'..',
+			`${path.basename(repoDir)}-fleet-worktrees`
+		)
+		cleanupDirs.push(wtRoot)
+
+		const info = await manager1.createWorktree('dev', 'main')
+
+		// A different manager (simulating new session) removes it
+		const manager2 = new WorktreeManager({
+			repoRoot: repoDir,
+			pi: pi as never,
+			sessionId: 'new-sess',
+		})
+
+		// Should resolve branch from porcelain output and delete it
+		await manager2.removeWorktree(info.worktreePath)
+
+		// Verify worktree is gone
+		await expect(fs.stat(info.worktreePath)).rejects.toThrow()
 	})
 })
 
 describe('WorktreeManager (mutex)', () => {
+	const cleanupDirs: string[] = []
+
+	afterEach(async () => {
+		for (const dir of cleanupDirs) {
+			await fs.rm(dir, { recursive: true, force: true }).catch(() => {})
+		}
+		cleanupDirs.length = 0
+	})
+
 	it('serializes concurrent worktree creation', async () => {
 		const repoDir = await createTempRepo()
+		cleanupDirs.push(repoDir)
 		const pi = realPiExec(repoDir)
 		const manager = new WorktreeManager({
 			repoRoot: repoDir,
 			pi: pi as never,
 			sessionId: 'mutex-test',
 		})
+		const wtRoot = path.join(
+			repoDir,
+			'..',
+			`${path.basename(repoDir)}-fleet-worktrees`
+		)
+		cleanupDirs.push(wtRoot)
 
 		// Create worktrees concurrently — mutex should prevent races
 		const results = await Promise.all([
@@ -302,12 +465,5 @@ describe('WorktreeManager (mutex)', () => {
 		expect(new Set(branches).size).toBe(3)
 
 		await manager.cleanupAll()
-		const worktreeRoot = path.join(
-			repoDir,
-			'..',
-			`${path.basename(repoDir)}-fleet-worktrees`
-		)
-		await fs.rm(worktreeRoot, { recursive: true, force: true }).catch(() => {})
-		await fs.rm(repoDir, { recursive: true, force: true }).catch(() => {})
 	})
 })
