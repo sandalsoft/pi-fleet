@@ -36,9 +36,8 @@ Implement git worktree lifecycle management with an acquire/release pool pattern
 - [ ] Tests verify worktree creation, release, reuse, and cleanup using real git repos in tmpdir
 - [ ] Git test isolation: set local config (user.name, user.email) in temp repos, use `git init -b main` (don't assume default branch name)
 ## Done summary
-TBD
-
+Implemented git worktree lifecycle management with mutex-protected creation, acquire/release pool pattern, and robust cleanup. WorktreeManager creates worktrees outside the repo (sibling dir with tmpdir fallback), sanitizes agent names to prevent path traversal, uses -C repoRoot for CWD independence, and emits worktree_created events. WorktreePool reuses released worktrees with git state reset. Cleanup module detects and removes stale fleet worktrees from crashed sessions using exact session ID matching and branch resolution from porcelain output.
 ## Evidence
-- Commits:
-- Tests:
+- Commits: 96d3c64, f16d5b2
+- Tests: npm test (195 passed)
 - PRs:

@@ -21,6 +21,7 @@ export interface SpecialistRecord {
 	worktreePath: string
 	model: string
 	status: 'running' | 'completed' | 'failed'
+	hostRoutableId?: string
 }
 
 // --- Per-agent cost tracking ---
