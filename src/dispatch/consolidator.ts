@@ -6,6 +6,8 @@ export interface SpecialistReport {
 	report: string
 	usage: Usage
 	status: 'completed' | 'failed'
+	/** Branch name in the specialist's worktree (for merge) */
+	worktreeBranch?: string
 }
 
 export interface ConsolidationResult {

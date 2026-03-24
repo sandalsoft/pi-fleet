@@ -37,12 +37,20 @@ export interface DispatcherOpts {
 	eventLog: EventLogWriter
 	state: FleetState
 	cancelSignal?: AbortSignal
+	/** If provided, acquire worktrees from this pool instead of using repoRoot */
+	acquireWorktree?: (agentName: string) => Promise<{ worktreePath: string; branch: string }>
+	/** If provided, release worktree back to pool */
+	releaseWorktree?: (worktreePath: string) => void
+	/** Called with usage data after each specialist completes */
+	onUsage?: (agentName: string, model: string, usage: import('./types.js').Usage) => void
 }
 
 export interface DispatchResult {
 	state: FleetState
 	summary: string
 	failedAgents: string[]
+	/** Branches from completed specialists that can be merged */
+	completedBranches: Array<{ agentName: string; branch: string }>
 }
 
 /**
@@ -66,6 +74,9 @@ export async function dispatch(opts: DispatcherOpts): Promise<DispatchResult> {
 		repoRoot,
 		eventLog,
 		cancelSignal,
+		acquireWorktree,
+		releaseWorktree,
+		onUsage,
 	} = opts
 	let { state } = opts
 
@@ -140,13 +151,14 @@ export async function dispatch(opts: DispatcherOpts): Promise<DispatchResult> {
 					scratchpadDir,
 				})
 
-				// We need a worktree path — for now, use the repoRoot.
-				// The /fleet handler in extension.ts will wire up the pool.
-				// The dispatcher accepts pre-set worktreePath from the assignment
-				// or falls back to repoRoot for testing purposes.
-				const worktreePath = assignment.expectedPaths.length > 0
-					? repoRoot
-					: repoRoot
+				// Acquire worktree from pool, or fall back to repoRoot
+				let worktreePath = repoRoot
+				let worktreeBranch: string | undefined
+				if (acquireWorktree) {
+					const wt = await acquireWorktree(assignment.agentName)
+					worktreePath = wt.worktreePath
+					worktreeBranch = wt.branch
+				}
 
 				const result = await spawnSpecialist({
 					agentName: assignment.agentName,
@@ -194,11 +206,20 @@ export async function dispatch(opts: DispatcherOpts): Promise<DispatchResult> {
 				}
 				setFleetState(state)
 
+				// Report usage for cost tracking
+				onUsage?.(assignment.agentName, model, result.usage)
+
+				// Release worktree back to pool
+				if (releaseWorktree && worktreePath !== repoRoot) {
+					releaseWorktree(worktreePath)
+				}
+
 				return {
 					agentName: assignment.agentName,
 					report: result.report,
 					usage: result.usage,
 					status: result.runtime.status as 'completed' | 'failed',
+					worktreeBranch: worktreeBranch ?? undefined,
 				} satisfies SpecialistReport
 			})
 		)
@@ -220,10 +241,16 @@ export async function dispatch(opts: DispatcherOpts): Promise<DispatchResult> {
 
 	ctx.ui.setWorkingMessage('')
 
+	// Collect branches from completed specialists
+	const completedBranches = allReports
+		.filter((r) => r.status === 'completed' && r.worktreeBranch)
+		.map((r) => ({ agentName: r.agentName, branch: r.worktreeBranch! }))
+
 	return {
 		state,
 		summary: consolidation.summary,
 		failedAgents: consolidation.failedAgents,
+		completedBranches,
 	}
 }
 

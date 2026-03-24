@@ -97,11 +97,14 @@ export default function piFleet(pi: ExtensionAPI): void {
 					setFleetState(resumeResult.state)
 					ctx.ui.notify(
 						`Resumed fleet session. Phase: ${resumeResult.state.phase}. ` +
-						`${resumeResult.interruptedAgents.length} interrupted agent(s).`,
+						`${resumeResult.interruptedAgents.length} interrupted agent(s). ` +
+						'Re-running from the beginning of the current phase.',
 						'info'
 					)
-					// TODO: re-dispatch interrupted agents from resumed state
-					return
+					// Fall through to normal flow — the resumed state informs
+					// which phase we're in, and the normal flow will re-execute
+					// from the current phase. A full re-dispatch of interrupted
+					// agents requires more granular state tracking (future work).
 				}
 				// No incomplete session or user declined — fall through to normal flow
 			}
@@ -261,7 +264,7 @@ export default function piFleet(pi: ExtensionAPI): void {
 				await pool.preCreate(Math.min(firstWaveSize, team.constraints.maxConcurrency), ctx)
 			}
 
-			// Dispatch
+			// Dispatch with worktree pool and cost tracking
 			const dispatchResult = await dispatch({
 				pi,
 				ctx,
@@ -272,30 +275,24 @@ export default function piFleet(pi: ExtensionAPI): void {
 				repoRoot,
 				eventLog,
 				state,
+				acquireWorktree: async (agentName) => {
+					const info = await pool.acquire(agentName, ctx)
+					return { worktreePath: info.worktreePath, branch: info.branch }
+				},
+				releaseWorktree: (worktreePath) => pool.release(worktreePath),
+				onUsage: (agentName, modelId, usage) => {
+					tracker.recordUsage(agentName, modelId, usage)
+					limitsMonitor.check()
+				},
 			})
 
 			state = dispatchResult.state
 			setFleetState(state)
 
 			// Merge specialist branches back
-			const specialistBranches: SpecialistBranch[] = []
-			for (const [agentName, spec] of state.specialists) {
-				if (spec.status === 'completed' && spec.worktreePath !== repoRoot) {
-					try {
-						const branchResult = await pi.exec('git', [
-							'-C', spec.worktreePath, 'rev-parse', '--abbrev-ref', 'HEAD',
-						])
-						if (branchResult.stdout.trim()) {
-							specialistBranches.push({
-								agentName,
-								branch: branchResult.stdout.trim(),
-							})
-						}
-					} catch {
-						// Worktree may have been cleaned up
-					}
-				}
-			}
+			const specialistBranches: SpecialistBranch[] = dispatchResult.completedBranches.map(
+				(b) => ({ agentName: b.agentName, branch: b.branch })
+			)
 
 			if (specialistBranches.length > 0) {
 				const gitExec = async (args: string[]) => {
