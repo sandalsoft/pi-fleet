@@ -1,0 +1,14 @@
+{
+  "assignee": null,
+  "claim_note": "",
+  "claimed_at": null,
+  "created_at": "2026-03-23T23:20:15.525080Z",
+  "depends_on": [],
+  "epic": "fn-1-pi-fleet-multi-agent-terminal",
+  "id": "fn-1-pi-fleet-multi-agent-terminal.1",
+  "priority": null,
+  "spec_path": ".flow/tasks/fn-1-pi-fleet-multi-agent-terminal.1.md",
+  "status": "todo",
+  "title": "Project scaffold and configuration system",
+  "updated_at": "2026-03-24T01:22:53.246865Z"
+}

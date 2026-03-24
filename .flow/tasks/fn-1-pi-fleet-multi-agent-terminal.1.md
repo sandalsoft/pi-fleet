@@ -1,0 +1,99 @@
+# fn-1-pi-fleet-multi-agent-terminal.1 Project scaffold and configuration system
+
+## Description
+Set up the pi-fleet extension project structure and implement the configuration system that all other modules depend on. Includes SDK surface validation, runtime smoke tests, and Node.js runtime validation.
+
+**Size:** M
+**Files:** package.json, tsconfig.json, tsconfig.tier2.json, esbuild.config.ts, vitest.config.ts, .gitignore, src/extension.ts, src/preflight.ts, src/config/teams.ts, src/config/agents.ts, src/config/chains.ts, src/config/schema.ts, scripts/sdk-check.ts, scripts/sdk-check-tier2.ts, scripts/smoke.ts, test/fixtures/sample-jsonl.txt, test/node-diff3-interop.test.ts, test/config/schema.test.ts, test/config/teams.test.ts, test/config/agents.test.ts, test/config/chains.test.ts, test/preflight.test.ts
+## Approach
+
+- Initialize npm package. The pi-specific field in package.json is `"pi": { "extensions": ["./dist/extension.js"] }` (array, matching dorkestrator's exact structure). Set `"type": "module"` for ESM. Build scripts use `tsx esbuild.config.ts` (see esbuild config bullet below). Keywords: `pi-package`, `pi-extension`. Pi SDK as both peerDeps AND devDeps: `@mariozechner/pi-coding-agent`, `@mariozechner/pi-agent-core`. `@sinclair/typebox` in `dependencies` (runtime requirement for registerTool schemas) + optionally peerDeps to dedupe with host. Also add `@types/node` as devDep.
+- **Runtime deps** (declare explicitly): `zod`, `yaml`, `p-limit`, `node-diff3`, `@sinclair/typebox`
+- **Dev deps** (build toolchain): `typescript`, `esbuild`, `vitest`, `tsx`, `@types/node`
+- Follow dorkestrator's package.json structure as reference pattern
+- Extension entry: export default function receiving ExtensionAPI, register three commands (/fleet, /fleet-status, /fleet-steer) as stubs. The /fleet stub must parse args for `--resume` and `--allow-dirty` flags (parsing logic implemented here; actual resume/dispatch behavior wired in tasks 3 and 6). **Command handler ordering — single preflight call**: the handler always calls `preflight({ mode: "bootstrap" })` to resolve repoRoot (cheap: git checks only, no config validation). Then checks `path.join(repoRoot, ".pi/teams.yaml")` existence using the real repoRoot. If missing → setup wizard. If present → dirty tree gating via a separate `checkDirtyTree()` helper (reuses repoRoot, no second preflight call), then `--resume` check, then dispatch. This avoids cwd-vs-repoRoot heuristic problems entirely.
+- **SDK surface validation** (`scripts/sdk-check.ts` — under scripts/, NOT under src/, to prevent inclusion in the runtime bundle): Import ExtensionAPI types. **Tier 1 (must-compile, hard-fail)**: construct representative typed calls (not just property references) for every method the extension cannot function without — call `pi.exec("git", ["status"])` and assign to typed `{ stdout: string, code: number }`, call `pi.appendEntry("fleet-event", { type: "test" })` with typed data argument, call `registerCommand` with typed handler signature, call `ctx.ui.select/confirm/input/notify/setWidget/setStatus` with actual argument types, call `ctx.sessionManager.getEntries()` and assign to typed variable expecting array with `customType` field (which task 3 depends on for filtering). This catches argument count, type, and return shape mismatches at compile time. The main `tsconfig.json` includes `scripts/sdk-check.ts` for typechecking but esbuild entry is only `src/extension.ts` so sdk-check is never bundled. Add `"typecheck": "tsc -p tsconfig.json --noEmit"` script as a build gate. **Tier 2 (nice-to-have, non-gating)**: `on("session_shutdown", ...)` (cleanup fallback: process signal handling; if event name differs in SDK, update and fall back to process signals), `sendMessage` (steering fallback: scratchpad-based), `setThinkingLevel` (omit if unavailable). Tier 2 lives in `scripts/sdk-check-tier2.ts` **excluded from the main tsconfig.json `include`**. Add `"typecheck:tier2": "tsc --noEmit --project tsconfig.tier2.json || true"` — tsc error output serves as the diagnostic.
+- **Runtime smoke script** (`scripts/smoke.ts` run via `npm run smoke` using tsx, NOT a vitest test — lives outside the test/ discovery tree). May require interactive permission approvals; has a hard timeout. Runs only when `pi` is on PATH (check with `which pi`). Steps:
+  1. **CLI flag validation**: attempt spawn with expected flags and prompt as trailing arg. If the first attempt fails for any reason (non-zero exit, "unknown flag", empty output, usage message printed), try the stdin-pipe variant. Record both attempts in smoke-results.json (`cliFlags.trailingArgResult` and `cliFlags.stdinPipeResult`) so the spawner (task 6) can choose the working mode. Classify outcomes: "flags accepted" (pi started AND emitted at least one valid JSONL line before exit/timeout), "flags rejected" (unknown/unrecognized in stderr), "permission needed" (interactive prompt), "model unavailable", "other error". Record top-level `preferredPromptMode: "trailing-arg" | "stdin-pipe" | null` so the task 6 spawner reads this directly without re-discovering. Print stderr/stdout on failure and suggest `pi --help`.
+  2. **JSONL shape validation**: from the successful spawn, parse JSONL events and verify expected shapes.
+  3. **Scratchpad write access**: ensure `.pi/` and `.pi/scratchpads/` exist (create if needed). First check for detached HEAD via `git symbolic-ref -q HEAD` (exit non-zero when detached) and for no commits via `git rev-parse --verify HEAD` (fails with no commits); if either condition holds, mark `scratchpadTest: { ok: false, skipped: true, error: "detached HEAD or no commits" }` and skip worktree creation. Otherwise, create a real git worktree with unique naming via `git worktree add -b fleet-smoke-<timestamp> ../<project>-fleet-smoke-<timestamp> HEAD` (timestamp suffix prevents collisions from prior failed runs). Spawn pi with the worktree as cwd, instruct it to write to `<repo-root>/.pi/scratchpads/smoke-test.md`. This directly validates the sibling-worktree scenario. Wrap in try/finally: on failure or success, `git worktree remove --force ../<project>-fleet-smoke-<timestamp>` and `git branch -D fleet-smoke-<timestamp>` ensure cleanup even on crash. Record result as `scratchpadTest: { ok: boolean, skipped?: boolean, error?: string }` in smoke-results.json (partial failure, not overall pass/fail).
+  4. **Routable ID discovery**: check JSONL stream for host-assigned session_id or agent_id that could enable sendMessage steering.
+  5. **ESM artifact validation**: run `npm run build` first to ensure `dist/extension.js` exists, then run `node --input-type=module -e "import('./dist/extension.js')"` to verify the bundle is loadable as ESM. The smoke script is responsible for producing a deterministic result — it must not assume the artifact is pre-built. This catches bundling errors (CJS-only output, syntax issues) but does not validate pi's internal module loading.
+  6. **Pi version recording**: capture `pi --version` output and include it in smoke-results.json for SDK version drift detection.
+  Always writes `.pi/smoke-results.json` on completion (no env var gating). Capability flags: `{ preferredPromptMode: "trailing-arg" | "stdin-pipe" | null, canWriteToRepoScratchpadFromSiblingCwd: boolean, steerViaSendMessage: boolean, routableIdField?: string, cliFlags: { accepted: boolean, errors?: string[], trailingArgResult: string, stdinPipeResult: string }, agentRunSucceeded: boolean, permissionPromptEncountered: boolean, scratchpadTest: { ok: boolean, skipped?: boolean, error?: string }, piVersion?: string }`. "cliFlags.accepted" means pi started AND emitted at least one valid JSONL line (not just "didn't error"); "agentRunSucceeded" means the pi process completed without error; "permissionPromptEncountered" is a valid outcome that still produces structured results. **Developer-local only**: add `.pi/smoke-results.json` to `.gitignore` (actual entry). If absent, all consumers default to safe fallbacks.
+- Include a **vendored JSONL fixture** in `test/fixtures/sample-jsonl.txt` with representative pi JSONL events. Task 1 creates this fixture file; task 6 writes the parser module and its vitest tests that consume it.
+- **Worktree root strategy**: Worktrees are always placed outside the repo to avoid git's rejection of nested worktrees. Default: `../<project>-fleet-worktrees/` (sibling dir). Fallback: `os.tmpdir()`. The smoke test validates whether pi subprocesses in sibling directories can write back to main repo scratchpads; this informs the scratchpad sync strategy (direct write vs periodic copy) but not the worktree placement itself.
+- **Node.js runtime validation**: Require Node.js >= 20 (for AbortSignal.any()). Set `"engines": { "node": ">=20" }` in package.json. Add runtime startup guard in extension entry: check `parseInt(process.versions.node) >= 20`, throw clear error if not. No fallback — hard requirement.
+- Config loader: parse `.pi/teams.yaml` (resolved relative to repoRoot from preflight) using `yaml` package, validate with Zod schemas. **teams.yaml canonical shape**: single team object (v1 — one team per file). YAML uses consistent snake_case: `{ team_id: string, orchestrator: { model: string, skills: string[] }, members: string[], constraints: { max_usd: number, max_minutes: number, task_timeout_ms?: number, max_concurrency: number } }`. `task_timeout_ms` is optional (default 120000). The Zod schema uses `strict()` mode — unknown keys produce a clear error ("Unknown key 'X' in teams.yaml"). This prevents silent config drift (contrast with agent front matter which uses `passthrough()` for forward compat). The Zod schema transforms snake_case YAML keys to camelCase TypeScript types on load (e.g., `task_timeout_ms` → `taskTimeoutMs`, `max_concurrency` → `maxConcurrency`). Downstream TS code uses camelCase exclusively.
+- Agent loader: read `.pi/agents/*.md` using `parseFrontmatter()` from `@mariozechner/pi-coding-agent`, validate front matter with Zod. **Agent identity**: filename stem (e.g., `architect` from `architect.md`) is the stable identifier used everywhere. The `name` field in front matter is a display name only. `teams.yaml.members` references filename stems.
+- Chain loader: parse `.pi/agent-chain.yaml` (canonical path — the ONLY supported location, all chain config under `.pi/`) with yaml + Zod validation
+- All Zod schemas in `schema.ts` — use `z.infer<>` for TypeScript types, `safeParse()` for user-friendly errors with file path context. **Agent front matter contract**: required fields: `name` (display), `model`. Optional: `skills: string[]`, `expertise: string`, `thinking: string`. Extra keys allowed (Zod `.passthrough()` for forward compat). Templates must match this contract exactly.
+- Standardize terminology: `skills: string[]` everywhere (agent front matter and teams.yaml orchestrator both use `skills`)
+- **No configurable paths in v1**: teams.yaml does NOT include a `paths` field. All locations are hardcoded under `.pi/` (agents/, scratchpads/, agent-chain.yaml). This prevents configuration drift and simplifies validation.
+- TypeBox schemas only for registerTool params (not config)
+- esbuild config (`esbuild.config.ts`): executed via `tsx esbuild.config.ts` (esbuild CLI does not natively consume .ts config files). The config file calls `esbuild.build()` programmatically (or `esbuild.context().watch()` when `--watch` is passed via process.argv). Scripts: `"build": "tsx esbuild.config.ts"`, `"dev": "tsx esbuild.config.ts --watch"`. Bundle for node, ESM format, externalize pi packages (`@mariozechner/*`) only. Bundle `@sinclair/typebox` and other runtime deps (they must be available at runtime even if pi doesn't provide them). Output to dist/.
+- Pre-flight validation (`src/preflight.ts`, centralized — reused by tasks 5, 6, 8). Two focused functions:
+  - `preflightBootstrap({ pi })`: resolves repoRoot via `pi.exec("git", ["rev-parse", "--show-toplevel"])`, validates git repo (hard-fail via `git rev-parse --git-dir`), detects shallow clone (hard-fail via `git rev-parse --is-shallow-repository`). Returns `{ repoRoot: string }`. Cheap, always safe to call.
+  - `preflightRunChecks({ repoRoot, allowDirty, pi, ctx })`: checks `.pi/teams.yaml` exists (existence only, no parse — just `fs.access()`), runs dirty-tree gating (if dirty and `!allowDirty`: warn + require `ctx.ui.confirm()`; if `allowDirty: true`: skip check).
+  **Crisp boundary**: preflight handles environment validation. Config loaders (teams.ts, agents.ts, chains.ts) handle config existence + schema validation with user-friendly errors including file path context. Preflight does NOT parse or validate config schemas — that's the loaders' job. Add `node-diff3` ESM import unit test (`test/node-diff3-interop.test.ts`) that imports diff3Merge and asserts it returns expected conflict blocks on a tiny sample. The test must verify argument ordering: use known conflicting inputs and check which side appears as "ours" vs "theirs" in the conflict result, then document the verified ordering for task 8 to match. **tsconfig.json** must set `esModuleInterop: true` and `allowSyntheticDefaultImports: true` for node-diff3 default import to work.
+
+## Key context
+
+- `parseFrontmatter()` is exported from `@mariozechner/pi-coding-agent` — use it instead of gray-matter
+- package.json uses `"pi": { "extensions": ["./dist/extension.js"] }` — the exact JSON shape from dorkestrator. Dev workflow uses `esbuild --watch`.
+- Subagent spawning uses `spawn("pi", [...])` from Node.js child_process — NOT pi.exec(). pi.exec() is for git commands and other CLI tools (array args, no shell injection). Use pi.exec("git", args) for all git operations.
+- Pi SDK packages go in BOTH peerDeps and devDeps — peerDeps for consumers, devDeps so tsc resolves types locally. `@sinclair/typebox` goes in dependencies (runtime) + optionally peerDeps. `@types/node` also needed as devDep.
+- Agent identity: filename stem = stable id. `members: ["architect", "developer"]` in teams.yaml. `/fleet-steer architect` routes by this id.
+- teams.yaml: single team object in v1. No `paths` field. Members are filename stems.
+- Chain config: `.pi/agent-chain.yaml` is the ONLY supported location. No root-level fallback.
+- All config under `.pi/`: teams.yaml, agents/*.md, agent-chain.yaml, scratchpads/
+
+## Acceptance
+- [ ] package.json: `"pi": { "extensions": ["./dist/extension.js"] }`, "type": "module", engines.node >= 20, peer+dev deps for pi SDK + @types/node, runtime deps (zod, yaml, p-limit, node-diff3), build/dev/test/typecheck scripts
+- [ ] SDK surface validation tiered: sdk-check.ts (tier 1: registerCommand, appendEntry, exec, ui methods, getEntries; hard-fail) compiles via `tsc --noEmit`; sdk-check-tier2.ts (session_shutdown, sendMessage, setThinkingLevel) excluded from main tsconfig, non-gating `npm run typecheck:tier2 || true`
+- [ ] Runtime smoke script at scripts/smoke.ts (not in test/ tree): `npm run smoke` validates CLI flags via spawn attempt, JSONL shapes, scratchpad write to parent repo .pi/scratchpads/, routable ID discovery
+- [ ] Smoke always writes .pi/smoke-results.json on completion (no env var gating)
+- [ ] Vendored JSONL fixture in test/fixtures/sample-jsonl.txt (task 6 writes the parser tests that consume it)
+- [ ] Vendored JSONL fixture in test/fixtures/ for unconditional offline parser testing
+- [ ] Worktree root always outside repo (sibling dir default, OS tmpdir fallback); no nested worktrees
+- [ ] Node.js >= 20 required via engines field + runtime startup guard (throws if process.versions.node < 20)
+- [ ] Extension entry registers /fleet, /fleet-status, /fleet-steer commands (stubs)
+- [ ] teams.yaml: single team object, canonical shape documented, Zod schema (no `paths` field in v1)
+- [ ] Agent identity: filename stem is stable id, members[] uses stems
+- [ ] Agent .md parser reads front matter via parseFrontmatter() and validates with Zod
+- [ ] Terminology standardized: `skills: string[]` in both agent front matter and teams.yaml
+- [ ] Chain config parsed from `.pi/agent-chain.yaml` ONLY (no root-level fallback)
+- [ ] Agent front matter contract: required (name, model), optional (skills, expertise, thinking), passthrough extras
+- [ ] Pre-flight in src/preflight.ts with two functions: `preflightBootstrap()` (repoRoot + git checks) and `preflightRunChecks()` (config existence + dirty tree)
+- [ ] Dirty working tree: soft-block with ctx.ui.confirm() (not just a warning), or --allow-dirty to skip
+- [ ] preflight() resolves and returns repoRoot via `git rev-parse --show-toplevel`; config loaders use repoRoot for .pi/ path resolution
+- [ ] teams.yaml Zod schema transforms snake_case YAML keys to camelCase TS types on load
+- [ ] esbuild config executed via `tsx esbuild.config.ts` with `--watch` support via process.argv
+- [ ] Smoke worktree uses unique names (timestamp suffix) with try/finally cleanup and per-step partial failure recording
+- [ ] Dev deps declared: typescript, esbuild, vitest, tsx, @types/node
+- [ ] node-diff3 ESM import unit test passes; tsconfig has esModuleInterop + allowSyntheticDefaultImports
+- [ ] .gitignore includes `.pi/scratchpads/` and `.pi/smoke-results.json` (plus standard Node ignores like `node_modules/`, `dist/`) but does NOT ignore `.pi/` wholesale — teams.yaml and agents/ must be tracked; worktrees live outside repo
+- [ ] @sinclair/typebox in dependencies (not just peerDeps) since it's used at runtime for registerTool schemas
+- [ ] esbuild config produces bundle in dist/ with watch mode for dev
+- [ ] Smoke test sibling-worktree uses `git worktree add` (not plain tmpdir)
+- [ ] Smoke script validates ESM artifact loading via `node --input-type=module -e "import('./dist/extension.js')"`
+- [ ] smoke-results.json includes piVersion field from `pi --version` (informational, no automated comparison)
+- [ ] Vitest configured with schema validation tests
+- [ ] Test files created: test/config/schema.test.ts, test/config/teams.test.ts, test/config/agents.test.ts, test/config/chains.test.ts, test/preflight.test.ts
+- [ ] All config types exported via z.infer<> for downstream modules
+- [ ] teams.yaml Zod schema uses `strict()` mode (rejects unknown keys with clear error)
+- [ ] SDK check constructs typed calls (not just property references) to catch argument/return mismatches
+- [ ] smoke-results.json includes `preferredPromptMode` field for spawner consumption
+- [ ] "flags accepted" = pi emitted at least one valid JSONL line (not just "no error")
+- [ ] Smoke worktree creation verifies HEAD validity; marks scratchpad test as "skipped" in detached HEAD
+- [ ] vitest.config.ts sets `include: ["test/**/*.test.ts"]` (excludes scripts/)
+- [ ] node-diff3 interop test verifies argument ordering (ours vs theirs) not just "it runs"
+- [ ] preflightBootstrap() resolves repoRoot; preflightRunChecks() handles dirty tree (separate function, not mode param)
+- [ ] Detached HEAD detected via `git symbolic-ref -q HEAD`; "no commits" via `git rev-parse --verify HEAD`
+## Done summary
+TBD
+
+## Evidence
+- Commits:
+- Tests:
+- PRs:

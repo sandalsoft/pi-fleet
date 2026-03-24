@@ -1,0 +1,261 @@
+{
+  "created_at": "2026-03-23T23:25:15.757289Z",
+  "epic": {
+    "data": {
+      "branch_name": "fn-1-pi-fleet-multi-agent-terminal",
+      "created_at": "2026-03-23T23:02:52.511953Z",
+      "depends_on_epics": [],
+      "id": "fn-1-pi-fleet-multi-agent-terminal",
+      "next_task": 1,
+      "plan_review_status": "unknown",
+      "plan_reviewed_at": null,
+      "spec_path": ".flow/specs/fn-1-pi-fleet-multi-agent-terminal.md",
+      "status": "open",
+      "title": "pi-fleet: Multi-Agent Terminal Orchestration Harness Extension",
+      "updated_at": "2026-03-23T23:20:05.126059Z"
+    },
+    "spec": "# pi-fleet: Multi-Agent Terminal Orchestration Harness Extension\n\n## Overview\n\npi-fleet is a pi-agent extension that provides configuration-driven multi-agent orchestration. Specialist agents collaborate in parallel, each isolated in their own git worktree, coordinated by a dispatcher that interviews the user, delegates work, consolidates results, and merges changes automatically. Also supports deterministic sequential pipelines via agent-chain.yaml.\n\n## Scope\n\n### In scope\n- Extension entry with /fleet, /fleet-status, /fleet-steer commands\n- Config system: .pi/teams.yaml + .pi/agents/*.md with Zod validation\n- Interactive setup from pre-built templates (Architect, Developer, Reviewer, Researcher, QA, DevOps)\n- Interview engine (8-12 questions) with automatic team selection\n- DAG-based task dependency resolution with wave-parallel execution via Kahn's algorithm\n- Specialist execution in isolated git worktrees via spawn(\"pi\", [\"--mode\", \"json\", ...])\n- Three-way merge: git merge --no-commit, node-diff3 for residual conflicts, dispatcher resolution\n- Cost tracking from JSON-mode msg.usage output, budget/time enforcement\n- Session persistence via pi.appendEntry() JSONL, resume via event replay\n- Agent-chain.yaml sequential pipeline mode with $INPUT substitution\n- Steering via /fleet-steer <agent-name> <message>\n- Status via /fleet-status using ctx.ui.setWidget() text-based display\n- Scratchpad files in .pi/scratchpads/<agent-name>.md\n- README.md and CLAUDE.md documentation\n\n### Out of scope (deferred)\n- Standalone TUI dashboard (Bubble Tea / Textual) \u2014 use pi UI primitives only\n- Cross-provider fallback \u2014 delegate to pi's native provider handling\n- Safety/damage control engine \u2014 delegate to pi's permission system\n- Composed chain+dispatcher mode\n\n## Approach\n\n### Pi SDK Integration Points\n- **Extension factory**: `export default function(pi: ExtensionAPI)` \u2014 registers commands, tools, event handlers\n- **Subagent spawning**: `spawn(\"pi\", [\"--mode\", \"json\", \"-p\", \"--no-session\", \"--model\", model, ...])` \u2014 streams JSONL events with usage stats\n- **UI**: `ctx.ui.select/confirm/input/notify/setStatus/setWidget/setWorkingMessage` for all user interaction\n- **Persistence**: `pi.appendEntry(\"fleet-event\", data)` for event sourcing, `ctx.sessionManager.getEntries()` for replay\n- **Front matter**: `parseFrontmatter()` from `@mariozechner/pi-coding-agent` for agent .md files\n- **Tool schemas**: `@sinclair/typebox` for registerTool params, Zod for config validation\n- **Steering**: `pi.sendMessage()` with `deliverAs: \"steer\"` to route messages to running agents\n\n### Key Patterns (from research)\n- **Worktree pool**: acquire/release/reuse pattern (Windmill). Place worktrees outside project dir. Mutex for creation. Prune stale on startup.\n- **DAG execution**: Kahn's algorithm produces execution waves. `p-limit` for concurrency control within waves.\n- **Event schema**: Discriminated union types (type field as discriminator). Events: session_start, interview_complete, team_selected, worktree_created, specialist_started, specialist_completed, specialist_failed, merge_started, merge_completed, consolidation_complete, session_complete, budget_warning, time_warning, session_aborted.\n- **Merge flow**: (1) git merge --no-commit for git's built-in rename/binary detection, (2) node-diff3 for text conflicts git can't auto-resolve, (3) dispatcher agent resolves semantic conflicts.\n- **Graceful shutdown**: Two-phase \u2014 SIGTERM with 60s grace period, then SIGKILL. Flush event log. Clean up worktrees. process.once() to prevent double-fire.\n- **JSONL crash recovery**: Skip unparseable trailing lines on replay.\n\n### Architecture Diagram\n\n```mermaid\ngraph TD\n    User[User] -->|/fleet| Ext[Extension Entry]\n    Ext --> Interview[Interview Engine]\n    Interview -->|answers| Selector[Team Selector]\n    Selector -->|task DAG| Dispatcher[Dispatcher]\n    Dispatcher -->|create| WM[Worktree Manager]\n    Dispatcher -->|spawn per wave| SA1[Specialist A]\n    Dispatcher -->|spawn per wave| SA2[Specialist B]\n    Dispatcher -->|spawn per wave| SA3[Specialist N]\n    SA1 -->|markdown report| Consolidator[Consolidator]\n    SA2 -->|markdown report| Consolidator\n    SA3 -->|markdown report| Consolidator\n    Consolidator --> Merger[Merge Engine]\n    Merger -->|merged code| Cleanup[Worktree Cleanup]\n    \n    ResourceMon[Resource Monitor] -.->|tracks| SA1\n    ResourceMon -.->|tracks| SA2\n    ResourceMon -.->|tracks| SA3\n    EventLog[Session Event Log] -.->|records| Dispatcher\n    EventLog -.->|records| ResourceMon\n    \n    User -->|/fleet-steer agent msg| Steering[Steering Handler]\n    Steering -->|pi.sendMessage| SA1\n    User -->|/fleet-status| Status[Status Display]\n    Status -->|ctx.ui.setWidget| User\n```\n\n### Data Flow: Chain Mode\n\n```mermaid\ngraph LR\n    Input[User Input] -->|$INPUT| Step1[Agent Step 1]\n    Step1 -->|output as $INPUT| Step2[Agent Step 2]\n    Step2 -->|output as $INPUT| Step3[Agent Step 3]\n    Step3 --> Output[Final Output]\n```\n\n## Risks & Mitigations\n\n| Risk | Likelihood | Impact | Mitigation |\n|------|-----------|--------|------------|\n| pi SDK API surface differs from research | Medium | High | Task 1 validates SDK API before building. Dorkestrator node_modules has real types. |\n| Worktree creation slow on large repos | Medium | Medium | Pool pattern pre-creates worktrees. Progress indication via setWorkingMessage. |\n| Cost tracking unreliable from subprocess stdout | Medium | High | Parse msg.usage from --mode json output (proven pattern from official subagent example). |\n| Three-way merge produces broken code | Low | High | Merge to integration branch first. Run tests before fast-forwarding main. |\n| JSONL corruption on crash | Low | Medium | Skip unparseable trailing lines. Write session_complete event for clean end detection. |\n| deliverAs: \"steer\" not in pi SDK | Low | High | Confirmed in ExtensionAPI types. Fallback: write to scratchpad file specialist reads. |\n\n## Non-Functional Targets\n\n- Worktree creation: < 5s per worktree (pool pre-creation helps)\n- Session resume: < 2s for logs under 10,000 events\n- Cost tracking latency: < 1s behind actual spend\n- Memory: < 100MB overhead beyond pi's baseline (event log in-memory view)\n\n## Rollout / Rollback\n\n- **Phase 1**: Scaffold + config + templates + interview (usable for config validation)\n- **Phase 2**: Worktree + DAG execution + resource monitoring (core dispatch loop)\n- **Phase 3**: Merge + chain + steering + status (full feature set)\n- **Phase 4**: Documentation + polish\n- **Rollback**: `pi uninstall pi-fleet`. No persistent state outside .pi/ directory.\n\n## Quick Commands\n\n```bash\n# Build\nnpx esbuild src/extension.ts --bundle --platform=node --format=esm --outdir=dist --external:@mariozechner/* --external:@sinclair/typebox\n\n# Test\nnpx vitest run\n\n# Install locally for testing\npi install .\n\n# Validate config\npi --ext pi-fleet /fleet --dry-run\n```\n\n## Acceptance\n\n- [ ] Extension installs via `pi install` and registers /fleet, /fleet-status, /fleet-steer commands\n- [ ] .pi/teams.yaml and .pi/agents/*.md configuration system works with Zod validation\n- [ ] Interactive setup creates config from templates when no teams.yaml exists\n- [ ] 6 pre-built agent templates ship (Architect, Developer, Reviewer, Researcher, QA, DevOps)\n- [ ] Interview engine conducts 8-12 question discovery via pi UI methods\n- [ ] Dispatcher automatically selects agents and creates task DAG from interview results\n- [ ] Specialists execute in isolated git worktrees with automatic merge back\n- [ ] Three-way merge handles file conflicts (git merge + node-diff3 + dispatcher resolution)\n- [ ] Agent-chain.yaml pipeline mode auto-detected and functional with $INPUT substitution\n- [ ] Cost tracking via JSON-mode msg.usage parsing with per-agent attribution\n- [ ] Budget/time limits enforced (soft warnings at 80%, hard limits with 60s graceful shutdown)\n- [ ] Scratchpad files persist agent mental models in .pi/scratchpads/\n- [ ] Session state persisted via pi.appendEntry(), resumable via /fleet --resume\n- [ ] /fleet-steer <agent-name> routes messages to specific running agents\n- [ ] /fleet-status renders text-based status via ctx.ui.setWidget()\n- [ ] Model routing respects agent defaults with dispatcher override capability\n- [ ] CLAUDE.md and AGENTS.md injected into all agent system prompts\n- [ ] Pre-flight checks: git repo validation, clean working tree, disk space\n- [ ] Per-agent taskTimeoutMs configurable with sensible default (120s)\n- [ ] Graceful handling of interview cancellation, worktree failures, JSONL corruption\n\n## References\n\n- Pi extension types: `@mariozechner/pi-coding-agent/dist/core/extensions/types.d.ts`\n- Official subagent example: `badlogic/pi-mono/packages/coding-agent/examples/extensions/subagent/`\n- Pi SDK docs: `github.com/badlogic/pi-mono/blob/main/packages/coding-agent/docs/extensions.md`\n- Dorkestrator reference: `/Users/eric/Development/code/Pi-Harness/dorkestrator/`\n- Worktree pool pattern: Windmill `worktree-pool.ts`, Roo-Code `worktree-service.ts`\n- Event sourcing: `oskardudycz/EventSourcing.NodeJS`\n- node-diff3: `github.com/bhousel/node-diff3`\n- p-limit: `github.com/sindresorhus/p-limit`\n"
+  },
+  "epic_id": "fn-1-pi-fleet-multi-agent-terminal",
+  "schema_version": 2,
+  "tasks": [
+    {
+      "data": {
+        "assignee": null,
+        "claim_note": "",
+        "claimed_at": null,
+        "created_at": "2026-03-23T23:20:15.525080Z",
+        "depends_on": [],
+        "epic": "fn-1-pi-fleet-multi-agent-terminal",
+        "id": "fn-1-pi-fleet-multi-agent-terminal.1",
+        "priority": null,
+        "spec_path": ".flow/tasks/fn-1-pi-fleet-multi-agent-terminal.1.md",
+        "status": "todo",
+        "title": "Project scaffold and configuration system",
+        "updated_at": "2026-03-23T23:20:57.780213Z"
+      },
+      "id": "fn-1-pi-fleet-multi-agent-terminal.1",
+      "runtime": null,
+      "spec": "# fn-1-pi-fleet-multi-agent-terminal.1 Project scaffold and configuration system\n\n## Description\nSet up the pi-fleet extension project structure and implement the configuration system that all other modules depend on.\n\n**Size:** M\n**Files:** package.json, tsconfig.json, esbuild.config.ts, vitest.config.ts, src/extension.ts, src/config/teams.ts, src/config/agents.ts, src/config/chains.ts, src/config/schema.ts\n\n## Approach\n\n- Initialize npm package with `pi.extensions` field pointing to `./src/extension.ts`, keywords `pi-package` and `pi-extension`, peer deps on `@mariozechner/pi-coding-agent`, `@mariozechner/pi-agent-core`, `@sinclair/typebox`\n- Follow dorkestrator's package.json structure as reference pattern\n- Extension entry: export default function receiving ExtensionAPI, register three commands (/fleet, /fleet-status, /fleet-steer) as stubs\n- Config loader: parse `.pi/teams.yaml` using `yaml` package (already a pi dep), validate with Zod schemas\n- Agent loader: read `.pi/agents/*.md` using `parseFrontmatter()` from `@mariozechner/pi-coding-agent`, validate front matter with Zod\n- Chain loader: parse `agent-chain.yaml` with yaml + Zod validation\n- All Zod schemas in `schema.ts` \u2014 use `z.infer<>` for TypeScript types, `safeParse()` for user-friendly errors\n- TypeBox schemas only for registerTool params (not config)\n- esbuild config: bundle for node, ESM format, externalize pi packages and typebox\n- Pre-flight validation function: check git repo, clean working tree, config files exist\n\n## Key context\n\n- `parseFrontmatter()` is exported from `@mariozechner/pi-coding-agent` \u2014 use it instead of gray-matter\n- Pi extensions loaded via jiti (TypeScript JIT) during dev \u2014 esbuild only needed for npm distribution\n- Agent front matter keys: name, model, expertise, skill, thinking (all optional except name)\n- teams.yaml schema: team_id, orchestrator (model, skills), members (string[]), constraints (max_usd, max_minutes, taskTimeoutMs), paths (agents, expertise, scratchpads)\n- Add maxConcurrency to teams.yaml constraints (default: 4, from gap analysis)\n## Acceptance\n- [ ] package.json has pi.extensions field, correct peer deps, build/test scripts\n- [ ] Extension entry registers /fleet, /fleet-status, /fleet-steer commands (stubs)\n- [ ] teams.yaml parser validates against Zod schema with helpful error messages\n- [ ] Agent .md parser reads front matter via parseFrontmatter() and validates with Zod\n- [ ] agent-chain.yaml parser validates chain definitions with Zod\n- [ ] Pre-flight validation checks: git repo, clean working tree, config file existence\n- [ ] esbuild config produces working bundle\n- [ ] Vitest configured and passing with at least schema validation tests\n- [ ] All config types exported via z.infer<> for downstream modules\n## Done summary\nTBD\n\n## Evidence\n- Commits:\n- Tests:\n- PRs:\n"
+    },
+    {
+      "data": {
+        "assignee": null,
+        "claim_note": "",
+        "claimed_at": null,
+        "created_at": "2026-03-23T23:20:32.549046Z",
+        "depends_on": [
+          "fn-1-pi-fleet-multi-agent-terminal.6"
+        ],
+        "epic": "fn-1-pi-fleet-multi-agent-terminal",
+        "id": "fn-1-pi-fleet-multi-agent-terminal.10",
+        "priority": null,
+        "spec_path": ".flow/tasks/fn-1-pi-fleet-multi-agent-terminal.10.md",
+        "status": "todo",
+        "title": "Steering handler and status display",
+        "updated_at": "2026-03-23T23:24:34.872974Z"
+      },
+      "id": "fn-1-pi-fleet-multi-agent-terminal.10",
+      "runtime": null,
+      "spec": "# fn-1-pi-fleet-multi-agent-terminal.10 Steering handler and status display\n\n## Description\nImplement the /fleet-steer command for mid-execution guidance and /fleet-status for text-based progress display.\n\n**Size:** M\n**Files:** src/steer/handler.ts, src/status/display.ts, src/status/formatter.ts\n\n## Approach\n\n- handler.ts: /fleet-steer command handler. Parse args as \"<agent-name> <message>\". Look up running agent by name from FleetState. If agent found and running, route message via pi.sendMessage() with deliverAs: \"steer\". If agent not found or finished, notify user via ctx.ui.notify(). Support special targets: \"all\" sends to all running agents, \"dispatcher\" sends to the orchestrator\n- display.ts: /fleet-status command handler. Read current FleetState (from in-memory state). Format as text-based table using formatter. Render via ctx.ui.setWidget(\"fleet-status\", lines). Include: agent name, model, status (queued/running/completed/failed), cost, elapsed time. Also show totals row and budget/time remaining\n- formatter.ts: format FleetState into string[] for setWidget. Use Unicode box-drawing characters for table borders. Color-code status values (running=yellow, completed=green, failed=red) if pi's theme supports ANSI colors. Keep it compact \u2014 widget space is limited\n- Also register a persistent status line via ctx.ui.setStatus(\"fleet\", summary) showing \"Fleet: 3/6 agents complete | $2.14 / $10.00 | 12m / 30m\" during execution. This updates on each cost_update event without requiring /fleet-status\n\n## Key context\n\n- pi.sendMessage() with deliverAs: \"steer\" delivers message after current tool execution completes\n- ctx.ui.setWidget(key, lines) renders text array in a widget area \u2014 this is the rendering mechanism\n- ctx.ui.setStatus(key, text) renders a single line in the footer status bar \u2014 always visible\n- The status display should work both during and after execution (showing final state)\n- Widget rendering from ExtensionUIContext: setWidget(key: string, content: string[] | undefined, options?: ExtensionWidgetOptions)\n## Acceptance\n- [ ] /fleet-steer <agent-name> <message> routes to specific running agent\n- [ ] /fleet-steer all broadcasts to all running agents\n- [ ] Steer to finished/nonexistent agent shows helpful error via ctx.ui.notify\n- [ ] /fleet-status renders text-based agent table via ctx.ui.setWidget\n- [ ] Status table shows: agent, model, status, cost, elapsed time, totals\n- [ ] Persistent footer status line updates on each cost_update event\n- [ ] Status works during execution (live) and after completion (final state)\n- [ ] Tests verify steer routing logic and status formatting\n## Done summary\nTBD\n\n## Evidence\n- Commits:\n- Tests:\n- PRs:\n"
+    },
+    {
+      "data": {
+        "assignee": null,
+        "claim_note": "",
+        "claimed_at": null,
+        "created_at": "2026-03-23T23:20:32.706447Z",
+        "depends_on": [
+          "fn-1-pi-fleet-multi-agent-terminal.6",
+          "fn-1-pi-fleet-multi-agent-terminal.8",
+          "fn-1-pi-fleet-multi-agent-terminal.9",
+          "fn-1-pi-fleet-multi-agent-terminal.10"
+        ],
+        "epic": "fn-1-pi-fleet-multi-agent-terminal",
+        "id": "fn-1-pi-fleet-multi-agent-terminal.11",
+        "priority": null,
+        "spec_path": ".flow/tasks/fn-1-pi-fleet-multi-agent-terminal.11.md",
+        "status": "todo",
+        "title": "README, CLAUDE.md, and project documentation",
+        "updated_at": "2026-03-23T23:24:35.040751Z"
+      },
+      "id": "fn-1-pi-fleet-multi-agent-terminal.11",
+      "runtime": null,
+      "spec": "# fn-1-pi-fleet-multi-agent-terminal.11 README, CLAUDE.md, and project documentation\n\n## Description\nCreate project documentation: README.md with installation, commands, and workflow guide. CLAUDE.md with development conventions for contributors.\n\n**Size:** S\n**Files:** README.md, CLAUDE.md\n\n## Approach\n\n- README.md: follow dorkestrator README pattern for pi extension documentation. Structure: Overview \u2192 Install \u2192 Quick Start \u2192 Commands (/fleet, /fleet-status, /fleet-steer) \u2192 Configuration (.pi/teams.yaml schema, .pi/agents/*.md format, agent-chain.yaml format) \u2192 Agent Templates \u2192 Architecture overview \u2192 Chain Mode\n- CLAUDE.md: development conventions \u2014 TypeScript, Zod for config validation, TypeBox for tool params, Vitest for tests, esbuild for build. Module structure overview. Test-before-commit rule. Key patterns: event sourcing, worktree pool, DAG execution\n\n## Key context\n\n- Follow dorkestrator README at /Users/eric/Development/code/Pi-Harness/dorkestrator/README.md as pattern\n- Include YAML examples for teams.yaml and agent front matter\n- Document the /fleet interactive setup flow for first-time users\n- Keep CLAUDE.md concise \u2014 only what can't be inferred from code\n## Acceptance\n- [ ] README.md covers installation, commands, configuration, and workflow\n- [ ] README includes YAML examples for teams.yaml and agent definitions\n- [ ] README documents chain mode and interactive setup\n- [ ] CLAUDE.md documents development conventions, build/test commands, and key patterns\n- [ ] Documentation follows dorkestrator README pattern for consistency\n## Done summary\nTBD\n\n## Evidence\n- Commits:\n- Tests:\n- PRs:\n"
+    },
+    {
+      "data": {
+        "assignee": null,
+        "claim_note": "",
+        "claimed_at": null,
+        "created_at": "2026-03-23T23:20:23.041838Z",
+        "depends_on": [
+          "fn-1-pi-fleet-multi-agent-terminal.1"
+        ],
+        "epic": "fn-1-pi-fleet-multi-agent-terminal",
+        "id": "fn-1-pi-fleet-multi-agent-terminal.2",
+        "priority": null,
+        "spec_path": ".flow/tasks/fn-1-pi-fleet-multi-agent-terminal.2.md",
+        "status": "todo",
+        "title": "Agent templates and interactive setup",
+        "updated_at": "2026-03-23T23:21:15.672897Z"
+      },
+      "id": "fn-1-pi-fleet-multi-agent-terminal.2",
+      "runtime": null,
+      "spec": "# fn-1-pi-fleet-multi-agent-terminal.2 Agent templates and interactive setup\n\n## Description\nCreate the 6 pre-built agent templates and the interactive setup wizard that bootstraps config files when none exist.\n\n**Size:** M\n**Files:** templates/agents/architect.md, templates/agents/developer.md, templates/agents/reviewer.md, templates/agents/researcher.md, templates/agents/qa.md, templates/agents/devops.md, templates/teams.yaml, templates/agent-chain.yaml, src/setup/wizard.ts, src/setup/scaffolder.ts\n\n## Approach\n\n- Each agent template: markdown file with YAML front matter (name, model, expertise, skill, thinking) and a system prompt body defining the agent's role, focus areas, and output expectations\n- Default models: Architect \u2192 opus, Developer \u2192 sonnet, Reviewer \u2192 opus, Researcher \u2192 sonnet, QA \u2192 sonnet, DevOps \u2192 haiku\n- Template teams.yaml: references all 6 agents, sets sensible defaults for constraints (max_usd: 10, max_minutes: 30, taskTimeoutMs: 120000, maxConcurrency: 4)\n- Template agent-chain.yaml: simple example pipeline (Researcher \u2192 Architect \u2192 Developer \u2192 Reviewer)\n- Setup wizard: triggered when /fleet detects no .pi/teams.yaml. Uses ctx.ui.select/confirm/input to walk user through team creation\n- Scaffolder: copies templates to .pi/teams.yaml and .pi/agents/, creating directories as needed\n- Handle partial state: if .pi/agents/ exists but teams.yaml doesn't (or vice versa), detect and fix\n\n## Key context\n\n- Agent templates should instruct specialists to write a structured markdown report as their final output (this is how the dispatcher collects results)\n- Each agent template should include instructions to use and update their scratchpad file at .pi/scratchpads/<name>.md\n- Specialist agents get context from CLAUDE.md + AGENTS.md injected by prompt-composer (task 6) \u2014 templates don't need to reference these\n## Acceptance\n- [ ] 6 agent templates with valid front matter and meaningful system prompts\n- [ ] Template teams.yaml references all 6 agents with sensible defaults\n- [ ] Template agent-chain.yaml demonstrates a valid pipeline\n- [ ] Setup wizard detects missing config and walks user through creation via pi UI methods\n- [ ] Scaffolder creates .pi/teams.yaml and .pi/agents/ with selected templates\n- [ ] Handles partial config state (agents exist but no teams.yaml, etc.)\n- [ ] Tests verify template front matter validates against Zod schemas from task 1\n## Done summary\nTBD\n\n## Evidence\n- Commits:\n- Tests:\n- PRs:\n"
+    },
+    {
+      "data": {
+        "assignee": null,
+        "claim_note": "",
+        "claimed_at": null,
+        "created_at": "2026-03-23T23:20:23.202588Z",
+        "depends_on": [
+          "fn-1-pi-fleet-multi-agent-terminal.1"
+        ],
+        "epic": "fn-1-pi-fleet-multi-agent-terminal",
+        "id": "fn-1-pi-fleet-multi-agent-terminal.3",
+        "priority": null,
+        "spec_path": ".flow/tasks/fn-1-pi-fleet-multi-agent-terminal.3.md",
+        "status": "todo",
+        "title": "Session persistence and event schema",
+        "updated_at": "2026-03-23T23:21:37.014531Z"
+      },
+      "id": "fn-1-pi-fleet-multi-agent-terminal.3",
+      "runtime": null,
+      "spec": "# fn-1-pi-fleet-multi-agent-terminal.3 Session persistence and event schema\n\n## Description\nDefine the fleet event schema as a discriminated union and implement session persistence using pi's appendEntry/getEntries API for event-sourced state management.\n\n**Size:** M\n**Files:** src/session/events.ts, src/session/event-log.ts, src/session/state.ts, src/session/resume.ts\n\n## Approach\n\n- Define FleetEvent as a discriminated union on `type` field. Event types: session_start, interview_complete, team_selected, task_graph_created, worktree_created, specialist_started, specialist_completed, specialist_failed, cost_update, merge_started, merge_completed, merge_conflict, consolidation_complete, budget_warning, time_warning, session_complete, session_aborted\n- Each event carries a timestamp and event-specific payload\n- event-log.ts: thin wrapper around pi.appendEntry(\"fleet-event\", event) for writes. Replays via ctx.sessionManager.getEntries() filtering for customType === \"fleet-event\"\n- state.ts: FleetState type representing current session state. Reconstructed via Array.reduce() over events. Tracks: phase (interview/dispatching/executing/merging/complete), active agents and their statuses, task graph with completion states, cumulative cost per agent, elapsed time\n- resume.ts: on session_start event, check for incomplete fleet session. Reconstruct state. Detect interrupted specialists (started but not completed/failed). Offer resume via ctx.ui.confirm()\n- Handle JSONL corruption: skip entries where data fails to parse as FleetEvent (log warning)\n- Write session_complete event for clean end detection vs crash detection\n\n## Key context\n\n- pi.appendEntry() persists to pi's session file (JSONL). NOT a custom file in .pi/fleet-sessions/. This is a correction from the original spec \u2014 pi handles the file storage.\n- ctx.sessionManager.getEntries() returns all session entries including custom ones\n- State reconstruction must be fast: < 2s for 10,000 events\n- During execution, in-memory FleetState is the source of truth. Events are the persistence/audit layer.\n## Acceptance\n- [ ] FleetEvent discriminated union covers all lifecycle transitions\n- [ ] event-log.ts wraps pi.appendEntry() for writes and getEntries() for reads\n- [ ] state.ts reconstructs FleetState from event sequence via reduce()\n- [ ] resume.ts detects incomplete sessions and offers resume\n- [ ] Handles corrupted/unparseable entries gracefully (skip + warn)\n- [ ] Clean vs crashed session detection via session_complete event\n- [ ] Tests verify state reconstruction produces correct state from event sequences\n- [ ] Tests verify corruption handling (malformed events skipped)\n## Done summary\nTBD\n\n## Evidence\n- Commits:\n- Tests:\n- PRs:\n"
+    },
+    {
+      "data": {
+        "assignee": null,
+        "claim_note": "",
+        "claimed_at": null,
+        "created_at": "2026-03-23T23:20:23.347622Z",
+        "depends_on": [
+          "fn-1-pi-fleet-multi-agent-terminal.1"
+        ],
+        "epic": "fn-1-pi-fleet-multi-agent-terminal",
+        "id": "fn-1-pi-fleet-multi-agent-terminal.4",
+        "priority": null,
+        "spec_path": ".flow/tasks/fn-1-pi-fleet-multi-agent-terminal.4.md",
+        "status": "todo",
+        "title": "Interview engine and team selector",
+        "updated_at": "2026-03-23T23:21:54.342638Z"
+      },
+      "id": "fn-1-pi-fleet-multi-agent-terminal.4",
+      "runtime": null,
+      "spec": "# fn-1-pi-fleet-multi-agent-terminal.4 Interview engine and team selector\n\n## Description\nImplement the interview engine that conducts 8-12 questions via pi UI to understand the user's task, and the team selector that automatically picks agents and constructs a task DAG.\n\n**Size:** M\n**Files:** src/interview/interviewer.ts, src/interview/team-selector.ts, src/interview/questions.ts\n\n## Approach\n\n- interviewer.ts: orchestrates question flow using ctx.ui.input(), ctx.ui.select(), ctx.ui.confirm(). Questions adapt based on: available agents in roster (from config), detected project type (file extensions in cwd), task complexity signals\n- questions.ts: question bank organized by category \u2014 task understanding, scope, agent selection, constraints, priorities. Each question has a condition function determining whether to ask it\n- team-selector.ts: takes interview answers + agent roster \u2192 produces TaskAssignment[]. Each assignment maps an agent to a task description with dependencies. Uses a scoring heuristic to match agent expertise to task requirements\n- Build the task DAG from assignments: identify which tasks can run in parallel (no shared file dependencies) and which must be sequential (data dependencies)\n- Handle interview cancellation: if user cancels (ctx.ui returns undefined), emit session_aborted event and clean up gracefully\n- Emit interview_complete and team_selected events to session log\n\n## Key context\n\n- ctx.ui.select() returns string | undefined (undefined = cancelled)\n- ctx.ui.input() returns string | undefined\n- ctx.ui.confirm() returns boolean\n- The team selector does NOT need user approval \u2014 fully automatic per spec\n- Task descriptions should be specific enough for a specialist to execute independently in a worktree\n- Consider that the dispatcher may need to override agent models for complex tasks (agent default with dispatcher override)\n## Acceptance\n- [ ] Interview asks 8-12 adaptive questions via pi UI methods\n- [ ] Questions adapt based on available agents and project context\n- [ ] Graceful handling of interview cancellation (undefined returns)\n- [ ] Team selector produces TaskAssignment[] with agent, task, and dependency info\n- [ ] Task DAG constructed with parallel-safe and sequential tasks identified\n- [ ] interview_complete and team_selected events emitted to session log\n- [ ] Tests verify team selection logic with various interview answer combinations\n- [ ] Tests verify cancellation handling\n## Done summary\nTBD\n\n## Evidence\n- Commits:\n- Tests:\n- PRs:\n"
+    },
+    {
+      "data": {
+        "assignee": null,
+        "claim_note": "",
+        "claimed_at": null,
+        "created_at": "2026-03-23T23:20:23.483766Z",
+        "depends_on": [
+          "fn-1-pi-fleet-multi-agent-terminal.1"
+        ],
+        "epic": "fn-1-pi-fleet-multi-agent-terminal",
+        "id": "fn-1-pi-fleet-multi-agent-terminal.5",
+        "priority": null,
+        "spec_path": ".flow/tasks/fn-1-pi-fleet-multi-agent-terminal.5.md",
+        "status": "todo",
+        "title": "Worktree manager with pool pattern",
+        "updated_at": "2026-03-23T23:22:38.145737Z"
+      },
+      "id": "fn-1-pi-fleet-multi-agent-terminal.5",
+      "runtime": null,
+      "spec": "# fn-1-pi-fleet-multi-agent-terminal.5 Worktree manager with pool pattern\n\n## Description\nImplement git worktree lifecycle management with an acquire/release pool pattern, mutex-protected creation, and robust cleanup.\n\n**Size:** M\n**Files:** src/worktree/manager.ts, src/worktree/pool.ts, src/worktree/cleanup.ts\n\n## Approach\n\n- pool.ts: WorktreePool class with acquire(agentName) and release(worktreePath) methods. Pre-creates worktrees on init if pool size is specified. Tracks in-use state. Reuses released worktrees by checking out a fresh branch from the base commit\n- manager.ts: higher-level API. createWorktree(agentName, baseBranch) creates a worktree with branch name `fleet/<agentName>-<sessionId>`. Uses execFileAsync pattern (not exec) to avoid shell injection. Place worktrees in a sibling directory `../<project>-fleet-worktrees/` to avoid tool scanning. Mutex around worktree creation to prevent branch name races\n- cleanup.ts: removeWorktree(path) via git worktree remove. pruneStaleWorktrees() runs git worktree prune on startup and shutdown. Detects stale worktrees from prior crashed sessions\n- Pre-flight checks: validate git repo, check for clean working tree (or warn), detect shallow clone (worktree add can fail)\n- Emit worktree_created events to session log\n- Register session_shutdown handler to clean up all active worktrees\n- Progress indication: use ctx.ui.setWorkingMessage() during worktree creation\n\n## Key context\n\n- Use pi.exec(\"git\", [...]) for git commands \u2014 no simple-git dependency needed\n- pi.exec returns { stdout, stderr, code, killed }\n- Worktree placement outside project dir prevents pi/agent tools from scanning worktree contents\n- git worktree add requires unique branch names per worktree\n- git worktree list --porcelain is machine-parseable for detecting existing worktrees\n- Each worktree needs its own node_modules if agents run npm scripts\n## Acceptance\n- [ ] WorktreePool with acquire/release/reuse semantics\n- [ ] Mutex-protected worktree creation prevents branch name races\n- [ ] Worktrees created in sibling directory, not inside project\n- [ ] execFileAsync pattern (array args) prevents shell injection\n- [ ] Stale worktree pruning on startup and shutdown\n- [ ] Pre-flight validation: git repo check, shallow clone detection\n- [ ] Progress indication via ctx.ui.setWorkingMessage()\n- [ ] worktree_created events emitted to session log\n- [ ] session_shutdown handler cleans up all active worktrees\n- [ ] Tests verify worktree creation, release, reuse, and cleanup\n## Done summary\nTBD\n\n## Evidence\n- Commits:\n- Tests:\n- PRs:\n"
+    },
+    {
+      "data": {
+        "assignee": null,
+        "claim_note": "",
+        "claimed_at": null,
+        "created_at": "2026-03-23T23:20:31.990901Z",
+        "depends_on": [
+          "fn-1-pi-fleet-multi-agent-terminal.1",
+          "fn-1-pi-fleet-multi-agent-terminal.3",
+          "fn-1-pi-fleet-multi-agent-terminal.4",
+          "fn-1-pi-fleet-multi-agent-terminal.5"
+        ],
+        "epic": "fn-1-pi-fleet-multi-agent-terminal",
+        "id": "fn-1-pi-fleet-multi-agent-terminal.6",
+        "priority": null,
+        "spec_path": ".flow/tasks/fn-1-pi-fleet-multi-agent-terminal.6.md",
+        "status": "todo",
+        "title": "DAG executor and dispatcher orchestration",
+        "updated_at": "2026-03-23T23:24:34.136856Z"
+      },
+      "id": "fn-1-pi-fleet-multi-agent-terminal.6",
+      "runtime": null,
+      "spec": "# fn-1-pi-fleet-multi-agent-terminal.6 DAG executor and dispatcher orchestration\n\n## Description\nImplement the core orchestration loop: DAG-based task dependency resolution, wave-parallel execution, specialist spawning via pi subprocesses, prompt composition, and output consolidation.\n\n**Size:** M (largest task \u2014 bordering L but cohesive enough to stay together)\n**Files:** src/dispatch/dispatcher.ts, src/dispatch/task-graph.ts, src/dispatch/prompt-composer.ts, src/dispatch/consolidator.ts, src/dispatch/spawner.ts\n\n## Approach\n\n- task-graph.ts: Kahn's algorithm for topological sort producing execution waves. Each wave contains tasks whose dependencies are all satisfied. detectCycles() for validation. Takes TaskAssignment[] from interview \u2192 produces ExecutionWave[]\n- spawner.ts: spawn(\"pi\", [\"--mode\", \"json\", \"-p\", \"--no-session\", \"--model\", model, ...]) in worktree cwd. Parse JSONL stdout for message_end events containing msg.usage (token counts, cost). Stream events to resource monitor. Use AbortController with AbortSignal.any() combining user cancellation and per-agent timeout (taskTimeoutMs from config). Track child PIDs for shutdown propagation\n- prompt-composer.ts: builds specialist system prompt from: agent definition body (markdown after front matter) + CLAUDE.md content + AGENTS.md content + task-specific brief + scratchpad instructions. Reads CLAUDE.md and AGENTS.md from project root\n- consolidator.ts: collects markdown reports from all specialists, passes them to the dispatcher agent to synthesize a unified summary\n- dispatcher.ts: orchestrates the full execution loop \u2014 for each wave: acquire worktrees, spawn specialists in parallel (p-limit for maxConcurrency), wait for completion, handle failures (dispatcher takes over failed tasks by spawning a new subprocess), advance to next wave. Emits specialist_started, specialist_completed, specialist_failed events\n- Error recovery: if specialist fails or returns garbage, dispatcher spawns a new pi subprocess with the failed task + error context. One retry, then mark as failed and continue\n\n## Key context\n\n- Official subagent example at badlogic/pi-mono/packages/coding-agent/examples/extensions/subagent/ is the reference for spawn pattern\n- spawn with --mode json streams JSONL: message_end events contain Message with usage stats\n- p-limit (sindresorhus) for concurrency control \u2014 default maxConcurrency: 4 from teams.yaml\n- AbortSignal.any() combines timeout + cancellation signals (Node.js 20+)\n- Specialist agents work in worktrees but write their markdown report to stdout (captured by spawner)\n- Scratchpad files at .pi/scratchpads/<agent-name>.md \u2014 specialists read/write these during execution\n## Acceptance\n- [ ] Kahn's algorithm produces correct execution waves from task DAG\n- [ ] Cycle detection throws clear error before execution starts\n- [ ] Specialists spawned via spawn(\"pi\", [\"--mode\", \"json\", ...]) in worktree cwd\n- [ ] JSONL stdout parsed for message_end events with usage data\n- [ ] Prompt composer injects agent definition + CLAUDE.md + AGENTS.md + task brief\n- [ ] p-limit enforces maxConcurrency from teams.yaml config\n- [ ] AbortController with per-agent timeout (taskTimeoutMs) kills stuck specialists\n- [ ] Failed specialist triggers dispatcher takeover (new subprocess with error context)\n- [ ] Consolidator collects markdown reports and produces unified summary\n- [ ] Events emitted: specialist_started, specialist_completed, specialist_failed\n- [ ] Tests verify wave execution order, concurrency limiting, and failure recovery\n## Done summary\nTBD\n\n## Evidence\n- Commits:\n- Tests:\n- PRs:\n"
+    },
+    {
+      "data": {
+        "assignee": null,
+        "claim_note": "",
+        "claimed_at": null,
+        "created_at": "2026-03-23T23:20:32.126785Z",
+        "depends_on": [
+          "fn-1-pi-fleet-multi-agent-terminal.1",
+          "fn-1-pi-fleet-multi-agent-terminal.3"
+        ],
+        "epic": "fn-1-pi-fleet-multi-agent-terminal",
+        "id": "fn-1-pi-fleet-multi-agent-terminal.7",
+        "priority": null,
+        "spec_path": ".flow/tasks/fn-1-pi-fleet-multi-agent-terminal.7.md",
+        "status": "todo",
+        "title": "Resource monitor with cost and time tracking",
+        "updated_at": "2026-03-23T23:24:34.333231Z"
+      },
+      "id": "fn-1-pi-fleet-multi-agent-terminal.7",
+      "runtime": null,
+      "spec": "# fn-1-pi-fleet-multi-agent-terminal.7 Resource monitor with cost and time tracking\n\n## Description\nImplement cost tracking from subprocess JSON output, budget/time enforcement with soft warnings and hard limits, and graceful shutdown.\n\n**Size:** M\n**Files:** src/resources/tracker.ts, src/resources/pricing.ts, src/resources/limits.ts, src/resources/timer.ts, src/resources/shutdown.ts\n\n## Approach\n\n- tracker.ts: receives usage data from spawner (input_tokens, output_tokens, cache_read, cache_write, cost) per agent per message. Accumulates per-agent and total costs. Emits cost_update events to session log\n- pricing.ts: model pricing lookup. Attempt to fetch from pi provider API if available. Fall back to hardcoded table for known models (Opus, Sonnet, Haiku with current pricing). Used when msg.usage doesn't include cost directly\n- limits.ts: monitors accumulated cost against max_usd and elapsed time against max_minutes from teams.yaml constraints. At 80% threshold: emit budget_warning/time_warning events, inject warning text into active agent prompts via scratchpad update, notify dispatcher to coordinate wrap-up. At 100%: trigger graceful shutdown\n- timer.ts: tracks session start time, elapsed minutes, per-agent durations. Provides time remaining calculations\n- shutdown.ts: two-phase graceful shutdown. Phase 1: send SIGTERM to all child processes, inject \"wrap up immediately\" into agent contexts, wait up to 60 seconds. Phase 2: SIGKILL remaining processes. Flush event log (emit session_aborted event). Clean up worktrees. Use process.once() for signal handlers to prevent double-fire on rapid Ctrl+C\n\n## Key context\n\n- msg.usage from --mode json output contains: { inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens } and sometimes cost\n- The spawner (task 6) streams these to the tracker \u2014 this module consumes that stream\n- Budget enforcement must not block during merge operations (gap analysis: aborting mid-merge corrupts branch state). Check: if currently merging, defer hard shutdown until merge completes\n- pi.on(\"session_shutdown\") for cleanup registration\n## Acceptance\n- [ ] Per-agent cost tracking from msg.usage data (tokens + cost)\n- [ ] Hardcoded pricing fallback for known models when cost not in usage data\n- [ ] Soft warning at 80% of budget/time limits with notification and scratchpad injection\n- [ ] Hard limit triggers graceful shutdown at 100%\n- [ ] Two-phase shutdown: SIGTERM with 60s grace \u2192 SIGKILL\n- [ ] Shutdown deferred if merge in progress (prevents corruption)\n- [ ] session_aborted event emitted on forced shutdown\n- [ ] Worktree cleanup runs during shutdown\n- [ ] process.once() prevents double-fire signal handling\n- [ ] Tests verify threshold detection, warning emission, and shutdown sequencing\n## Done summary\nTBD\n\n## Evidence\n- Commits:\n- Tests:\n- PRs:\n"
+    },
+    {
+      "data": {
+        "assignee": null,
+        "claim_note": "",
+        "claimed_at": null,
+        "created_at": "2026-03-23T23:20:32.270949Z",
+        "depends_on": [
+          "fn-1-pi-fleet-multi-agent-terminal.5",
+          "fn-1-pi-fleet-multi-agent-terminal.6"
+        ],
+        "epic": "fn-1-pi-fleet-multi-agent-terminal",
+        "id": "fn-1-pi-fleet-multi-agent-terminal.8",
+        "priority": null,
+        "spec_path": ".flow/tasks/fn-1-pi-fleet-multi-agent-terminal.8.md",
+        "status": "todo",
+        "title": "Merge engine with three-way conflict resolution",
+        "updated_at": "2026-03-23T23:24:34.519763Z"
+      },
+      "id": "fn-1-pi-fleet-multi-agent-terminal.8",
+      "runtime": null,
+      "spec": "# fn-1-pi-fleet-multi-agent-terminal.8 Merge engine with three-way conflict resolution\n\n## Description\nImplement the merge engine that combines specialist worktree branches back to the main branch using git's three-way merge with programmatic conflict resolution.\n\n**Size:** M\n**Files:** src/merge/merger.ts, src/merge/conflict-resolver.ts, src/merge/integration.ts\n\n## Approach\n\n- integration.ts: create an integration branch from the current HEAD. Merge each specialist's worktree branch into the integration branch one at a time (sequential to avoid compound conflicts). If all merges succeed, fast-forward the original branch to the integration branch. If any merge fails unrecoverably, preserve the integration branch for manual inspection\n- merger.ts: for each specialist branch, run git merge --no-commit to stage changes. Check for conflicts via git diff --name-only --diff-filter=U. If no conflicts, commit and proceed. If conflicts exist, hand off to conflict-resolver\n- conflict-resolver.ts: for text file conflicts, use node-diff3 to attempt programmatic resolution. If node-diff3 produces a clean merge, write the resolved content and git add. For remaining conflicts (node-diff3 can't resolve), spawn a dispatcher subprocess with both versions and ask it to produce a resolution. For binary file conflicts, default to the later specialist's version (configurable). Emit merge_conflict events for each conflict encountered\n- Handle \"nothing to merge\" case: specialist that only produced a report with no code changes \u2014 skip merge, just collect the report\n- Emit merge_started, merge_completed events\n\n## Key context\n\n- git merge --no-commit stages but doesn't commit \u2014 lets us inspect and resolve before finalizing\n- node-diff3 operates on text line arrays: diff3Merge(agentA_lines, original_lines, agentB_lines) returns ok/conflict blocks\n- Binary files (images, compiled assets) can't be merged with node-diff3 \u2014 detect via git diff --numstat (binary shows as \"-\" for additions/deletions)\n- Merge to integration branch first, not directly to user's working branch \u2014 prevents half-merged state\n- Gap analysis: dispatcher-driven conflict resolution is best-effort. The dispatcher agent may hallucinate a resolution. Run any available test suite after merge as a safety check\n## Acceptance\n- [ ] Integration branch created for safe merge operations\n- [ ] Sequential merge of specialist branches via git merge --no-commit\n- [ ] Conflict detection via git diff --name-only --diff-filter=U\n- [ ] Text conflicts resolved programmatically via node-diff3\n- [ ] Residual conflicts dispatched to dispatcher agent for resolution\n- [ ] Binary file conflicts handled (default to later specialist's version)\n- [ ] \"Nothing to merge\" case handled gracefully (report-only specialists)\n- [ ] Fast-forward original branch on success\n- [ ] merge_started, merge_completed, merge_conflict events emitted\n- [ ] Tests verify clean merge, conflict detection, and resolution flow\n## Done summary\nTBD\n\n## Evidence\n- Commits:\n- Tests:\n- PRs:\n"
+    },
+    {
+      "data": {
+        "assignee": null,
+        "claim_note": "",
+        "claimed_at": null,
+        "created_at": "2026-03-23T23:20:32.411803Z",
+        "depends_on": [
+          "fn-1-pi-fleet-multi-agent-terminal.1",
+          "fn-1-pi-fleet-multi-agent-terminal.6"
+        ],
+        "epic": "fn-1-pi-fleet-multi-agent-terminal",
+        "id": "fn-1-pi-fleet-multi-agent-terminal.9",
+        "priority": null,
+        "spec_path": ".flow/tasks/fn-1-pi-fleet-multi-agent-terminal.9.md",
+        "status": "todo",
+        "title": "Agent-chain pipeline runner",
+        "updated_at": "2026-03-23T23:24:34.695521Z"
+      },
+      "id": "fn-1-pi-fleet-multi-agent-terminal.9",
+      "runtime": null,
+      "spec": "# fn-1-pi-fleet-multi-agent-terminal.9 Agent-chain pipeline runner\n\n## Description\nImplement the agent-chain pipeline runner for deterministic sequential execution with $INPUT variable substitution between steps.\n\n**Size:** M\n**Files:** src/chain/runner.ts, src/chain/variable.ts, src/chain/detector.ts\n\n## Approach\n\n- detector.ts: check for .pi/agent-chain.yaml existence. If found and /fleet is invoked, offer chain mode as an option during the interview (ctx.ui.select with \"Dispatcher mode\" and \"Chain mode\" options). Parse chain config using the Zod schema from task 1\n- runner.ts: execute chain steps sequentially. For each step: resolve the agent definition from .pi/agents/, compose prompt with $INPUT substituted, spawn pi subprocess in a worktree (reuse worktree between steps since they're sequential), capture output as the next step's $INPUT. Emit specialist_started/completed events per step. Respect the same budget/time limits as dispatcher mode\n- variable.ts: $INPUT substitution in prompt strings. Handle edge cases: $INPUT appears multiple times, $INPUT in a multi-line context, first step has no $INPUT (it's the user's original task description), output from previous step exceeds reasonable size (truncate with warning at configurable limit, default 50k tokens)\n- Chain steps can specify model overrides and tool restrictions per step\n- If a chain step fails, abort the chain and report which step failed with context\n\n## Key context\n\n- agent-chain.yaml schema: name, description, steps[] where each step has: agent (name), task (prompt with $INPUT), model (optional override), tools (optional restriction)\n- Chain mode reuses a single worktree (sequential, not parallel) \u2014 simpler than dispatcher mode\n- Chain detection happens during the interview phase \u2014 integrate with interviewer.ts from task 4\n- The chain runner shares the spawner from task 6 for subprocess management\n## Acceptance\n- [ ] agent-chain.yaml auto-detected and offered as option during interview\n- [ ] Chain steps execute sequentially with correct agent/model/tools per step\n- [ ] $INPUT substitution works: first step gets user task, subsequent steps get prior output\n- [ ] Output size limits with truncation and warning for oversized step outputs\n- [ ] Chain abort on step failure with clear error reporting\n- [ ] Budget/time limits respected (same enforcement as dispatcher mode)\n- [ ] Events emitted per chain step (specialist_started, specialist_completed/failed)\n- [ ] Tests verify $INPUT substitution, sequential execution, and failure handling\n## Done summary\nTBD\n\n## Evidence\n- Commits:\n- Tests:\n- PRs:\n"
+    }
+  ]
+}
