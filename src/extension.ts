@@ -31,6 +31,8 @@ import { createSessionTimer } from './resources/timer.js'
 import { createLimitsMonitor } from './resources/limits.js'
 import { WorktreeManager } from './worktree/manager.js'
 import { WorktreePool } from './worktree/pool.js'
+import { installSignalHandlers, gracefulShutdown } from './resources/shutdown.js'
+import { fullCleanup } from './worktree/cleanup.js'
 
 // Runtime-available APIs not yet in the ExtensionAPI type definitions.
 type PiRuntime = ExtensionAPI & {
@@ -161,7 +163,24 @@ export default function piFleet(pi: ExtensionAPI): void {
 						`Hard limit reached: ${result.kind} at ${result.current.toFixed(2)} / ${result.limit}. Shutting down.`,
 						'error'
 					)
+					cancelController.abort()
 				},
+			})
+
+			// Cancellation and shutdown wiring
+			const cancelController = new AbortController()
+
+			const removeSignalHandlers = installSignalHandlers(async (reason) => {
+				cancelController.abort()
+				await gracefulShutdown({
+					processes: [],
+					scratchpadDir,
+					eventLog,
+					worktreeManager,
+					sessionId,
+					reason,
+					isMergeInProgress: () => getFleetState()?.mergeInProgress ?? false,
+				})
 			})
 
 			// Initial limits check (also validates config)
@@ -275,6 +294,7 @@ export default function piFleet(pi: ExtensionAPI): void {
 				repoRoot,
 				eventLog,
 				state,
+				cancelSignal: cancelController.signal,
 				acquireWorktree: async (agentName) => {
 					const info = await pool.acquire(agentName, ctx)
 					return { worktreePath: info.worktreePath, branch: info.branch }
@@ -355,8 +375,10 @@ export default function piFleet(pi: ExtensionAPI): void {
 			state = reduceEvent(state, completeEvent)
 			setFleetState(state)
 
-			// Clean up worktrees
+			// Clean up worktrees and signal handlers
+			removeSignalHandlers()
 			try {
+				await fullCleanup(worktreeManager, sessionId)
 				await pool.destroyAll()
 			} catch {
 				// Non-fatal

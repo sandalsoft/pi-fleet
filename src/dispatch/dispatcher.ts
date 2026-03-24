@@ -160,6 +160,20 @@ export async function dispatch(opts: DispatcherOpts): Promise<DispatchResult> {
 					worktreeBranch = wt.branch
 				}
 
+				// Emit specialist_started BEFORE spawning (with provisional runId)
+				const runId = `${assignment.agentName}-${Date.now().toString(36)}`
+				const startedEvent = createFleetEvent<SpecialistStartedEvent>({
+					type: 'specialist_started',
+					agentName: assignment.agentName,
+					runId,
+					pid: 0, // updated when process starts
+					worktreePath,
+					model,
+				})
+				await eventLog.append(startedEvent)
+				state = reduceEvent(state, startedEvent)
+				setFleetState(state)
+
 				const result = await spawnSpecialist({
 					agentName: assignment.agentName,
 					model,
@@ -171,19 +185,6 @@ export async function dispatch(opts: DispatcherOpts): Promise<DispatchResult> {
 				})
 
 				runtimes.set(assignment.agentName, result.runtime)
-
-				// Emit specialist_started
-				const startedEvent = createFleetEvent<SpecialistStartedEvent>({
-					type: 'specialist_started',
-					agentName: assignment.agentName,
-					runId: result.runtime.runId,
-					pid: result.runtime.pid,
-					worktreePath: result.runtime.worktreePath,
-					model,
-				})
-				await eventLog.append(startedEvent)
-				state = reduceEvent(state, startedEvent)
-				setFleetState(state)
 
 				// Emit completion or failure
 				if (result.runtime.status === 'completed') {
