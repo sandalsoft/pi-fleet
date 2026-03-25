@@ -9,23 +9,24 @@ Harden rendering in both `fleet-progress-component.ts` AND `formatter.ts` to fix
 
 ### 1. Fix width authority
 
-Current code: `const w = Math.max(40, width)` at component L125, then truncates to `w`. If TUI passes `width < 40`, emitted lines exceed actual terminal width and pi-tui throws.
+Current code: `const w = Math.max(40, width)` at component L127, then truncates to `w`. If TUI passes `width < 40`, emitted lines exceed actual terminal width and pi-tui throws.
 
 Fix: use `width` for all `truncateToWidth()` output calls. Use `layoutWidth = Math.max(40, width)` for internal column positioning only.
 
 ### 2. Replace `slice()` with `truncateToWidth()` in BOTH renderers
 
 **fleet-progress-component.ts** (4 locations):
-- L212: agent name → `truncateToWidth(agent.name, 14, '\u2026')`
-- L236: error text → `truncateToWidth(firstLine, 70, '\u2026')`
-- L243: log path → `truncateToWidth(label, 70, '\u2026')`
-- L259: activity text → `truncateToWidth(entry.text, 70, '\u2026')`
+- L214: agent name → `truncateToWidth(agent.name, 14, '\u2026')`
+- L239: error text → `truncateToWidth(firstLine, 70, '\u2026')`
+- L246: log path → `truncateToWidth(label, 70, '\u2026')`
+- L262: activity text → `truncateToWidth(entry.text, 70, '\u2026')`
 
 **formatter.ts** (4 locations):
-- L80: agent name → same pattern
-- L90: error text → same pattern
-- L94: log path → same pattern
-- L160: activity text → same pattern
+- L110: agent name → same pattern
+- L121: error text → same pattern
+- L125: log path → same pattern
+- L195: activity text → same pattern
+<!-- Updated by plan-sync: fn-6-fleet-live-progress-display-bug-fixes.2 added ~30 lines (formatAgentElapsed, elapsedMs helpers) shifting formatter.ts line numbers -->
 
 Note: `formatter.ts` uses plain strings (no ANSI), so `slice()` is technically safe there today. But applying consistent `truncateToWidth()` ensures the codebase stays safe if formatter output is ever piped through theme wrapping.
 

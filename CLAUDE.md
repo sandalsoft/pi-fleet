@@ -40,7 +40,7 @@ src/
   chain/                # Agent-chain detector, variable substitution, runner
   resources/            # Cost tracker, budget/time limits, graceful shutdown
   steer/                # Scratchpad-based steering handler
-  status/               # Status display formatter, widget handler, fleet-logs browser
+  status/               # Status display formatter, widget handler, fleet-logs browser, live progress TUI component
 ```
 
 ## Test Convention
@@ -64,6 +64,7 @@ Integration tests that need git (worktree, merge) create isolated tmpdir repos.
 - **Snake-to-camel**: `teams.yaml` uses `snake_case`; Zod `.transform()` produces `camelCase` TS types.
 - **Agent identity**: Filename stem = stable ID. `members[]` uses stems. Events persist `agentName` as stem.
 - **Scratchpad steering**: `/fleet-steer` appends to `.pi/scratchpads/<agent>.md`. Agent names validated against roster. Path traversal rejected.
+- **Live widget refresh**: `FleetProgressComponent` implements the TUI `Component` interface. The dispatcher calls `updateProgressWidget()` which installs a component factory on first call, then updates data via `.update()` + `tui.requestRender()` on subsequent calls. The `width` parameter from TUI is authoritative for output truncation; `layoutWidth = Math.max(40, width)` handles internal column math only.
 - **Repo root**: Always resolved via `git rev-parse --show-toplevel`, never `process.cwd()`. Threaded to all modules.
 
 ## Config Paths

@@ -2,7 +2,7 @@ import type { Component, TUI } from '@mariozechner/pi-tui'
 import { truncateToWidth, visibleWidth } from '@mariozechner/pi-tui'
 import type { Theme, ThemeColor } from '@mariozechner/pi-coding-agent'
 import type { FleetState } from '../session/state.js'
-import { formatTokens, formatUsd, formatAgentElapsed } from './formatter.js'
+import { formatTokens, formatUsd, formatAgentElapsed, formatElapsed, collectAgentRows, type AgentRow } from './formatter.js'
 import type { ActivityStore } from './activity-store.js'
 
 // --- Configurable color mapping ---
@@ -52,17 +52,6 @@ const TREE_END = '\u2514\u2500' // └─
 // --- Progress bar characters ---
 const BAR_FILLED = '\u2593' // ▓
 const BAR_EMPTY = '\u2591'  // ░
-
-// --- Helper types ---
-
-interface AgentRow {
-	name: string
-	status: 'running' | 'completed' | 'failed' | 'queued'
-	costUsd: number
-	totalTokens: number
-	startedAt: string | null
-	completedAt: string | null
-}
 
 /**
  * TUI Component for rendering the fleet progress widget with theme colors.
@@ -123,8 +112,9 @@ export class FleetProgressComponent implements Component {
 		const th = this.theme
 		const c = this.colors
 		const lines: string[] = []
-		const agents = this.collectAgentRows(state)
-		const w = Math.max(40, width)
+		const agents = collectAgentRows(state)
+		// layoutWidth for column positioning; width for output truncation
+		const layoutWidth = Math.max(40, width)
 
 		// Header: full-width, left phase + right stats
 		const phaseLabel = state.phase.charAt(0).toUpperCase() + state.phase.slice(1)
@@ -134,12 +124,33 @@ export class FleetProgressComponent implements Component {
 		const tokensStr = totalTokens > 0 ? `  ${formatTokens(totalTokens)} tok` : ''
 		const headerLeft = th.fg(c.header, `Fleet [${phaseLabel}]`)
 		const headerRight = th.fg(c.stats, `${totalCost}${budgetStr}${tokensStr}`)
-		const headerPad = Math.max(1, w - 4 - visibleWidth(headerLeft) - visibleWidth(headerRight))
-		lines.push(truncateToWidth(`  ${headerLeft}${' '.repeat(headerPad)}${headerRight}`, w))
+		const headerPad = Math.max(1, layoutWidth - 4 - visibleWidth(headerLeft) - visibleWidth(headerRight))
+		lines.push(truncateToWidth(`  ${headerLeft}${' '.repeat(headerPad)}${headerRight}`, width, ''))
+
+		// Dynamic overhead: header(1) + summary(1) + bar lines (0/1/2)
+		let overheadLines = 2 // header + summary
+		if (state.constraints) {
+			// Determine bar layout: side-by-side vs stacked
+			const timeLabel = th.fg(c.barLabel, 'TIME')
+			const costLabel = th.fg(c.barLabel, 'COST')
+			const elapsedMs = this.elapsedMs(state.startedAt)
+			const timeStats = th.fg(c.stats, `${formatElapsed(elapsedMs)} / ${state.constraints.maxMinutes}m`)
+			const costStats = th.fg(c.stats, `${totalCost} / ${formatUsd(state.constraints.maxUsd)}`)
+
+			// Measure what fixed content consumes (labels + stats + spacing)
+			const fixedWidth = visibleWidth(timeLabel) + visibleWidth(timeStats) + visibleWidth(costLabel) + visibleWidth(costStats) + 12 // spaces/padding
+			const availableForBars = layoutWidth - fixedWidth
+			const minBarWidth = 8
+
+			if (availableForBars >= minBarWidth * 2) {
+				overheadLines = 3 // side-by-side (1 bar line)
+			} else {
+				overheadLines = 4 // stacked (2 bar lines)
+			}
+		}
 
 		// Dynamic height budget: cap total widget at ~18 lines
 		const MAX_WIDGET_LINES = 18
-		const overheadLines = 3 // header + progress + summary
 		const maxSubItems = Math.max(1, Math.floor((MAX_WIDGET_LINES - agents.length - overheadLines) / Math.max(1, agents.length)))
 
 		// Agent tree with sub-items showing recent activity
@@ -150,7 +161,7 @@ export class FleetProgressComponent implements Component {
 			const treeVert = isLast ? '   ' : th.fg(c.tree, '\u2502  ') // │  or spaces
 
 			// Agent header row
-			lines.push(truncateToWidth(this.renderAgentRow(agent, w, treeBranch), w))
+			lines.push(truncateToWidth(this.renderAgentRow(agent, layoutWidth, treeBranch), width, ''))
 
 			// Sub-tree: recent activities or error
 			const subItems = this.getAgentSubItems(agent, maxSubItems)
@@ -158,27 +169,41 @@ export class FleetProgressComponent implements Component {
 				const subIsLast = j === subItems.length - 1
 				const subBranch = th.fg(c.tree, subIsLast ? TREE_END : TREE_MID)
 				const subLine = `  ${treeVert}${subBranch} ${subItems[j]}`
-				lines.push(truncateToWidth(subLine, w))
+				lines.push(truncateToWidth(subLine, width, ''))
 			}
 		}
 
 		// Progress bars — full width
 		if (state.constraints) {
-			const elapsed = this.elapsedMs(state.startedAt)
+			const elapsedMs = this.elapsedMs(state.startedAt)
 			const timeLimitMs = state.constraints.maxMinutes * 60_000
-			const timeRatio = timeLimitMs > 0 ? elapsed / timeLimitMs : 0
+			const timeRatio = timeLimitMs > 0 ? elapsedMs / timeLimitMs : 0
 			const costRatio = state.constraints.maxUsd > 0 ? state.totalCostUsd / state.constraints.maxUsd : 0
 
-			// Split available width between TIME and COST bars
-			const barWidth = Math.max(8, Math.floor((w - 50) / 2))
-			const timeBar = this.renderBar(timeRatio, barWidth)
-			const costBar = this.renderBar(costRatio, barWidth)
 			const timeLabel = th.fg(c.barLabel, 'TIME')
 			const costLabel = th.fg(c.barLabel, 'COST')
-			const timeStats = th.fg(c.stats, `${this.formatElapsed(elapsed)} / ${state.constraints.maxMinutes}m`)
+			const timeStats = th.fg(c.stats, `${formatElapsed(elapsedMs)} / ${state.constraints.maxMinutes}m`)
 			const costStats = th.fg(c.stats, `${totalCost} / ${formatUsd(state.constraints.maxUsd)}`)
 
-			lines.push(truncateToWidth(`  ${timeLabel} ${timeBar} ${timeStats}    ${costLabel} ${costBar} ${costStats}`, w))
+			// Measure fixed content to compute dynamic bar widths
+			const fixedWidth = visibleWidth(timeLabel) + visibleWidth(timeStats) + visibleWidth(costLabel) + visibleWidth(costStats) + 12
+			const availableForBars = layoutWidth - fixedWidth
+			const minBarWidth = 8
+
+			if (availableForBars >= minBarWidth * 2) {
+				// Side-by-side layout
+				const barWidth = Math.max(minBarWidth, Math.floor(availableForBars / 2))
+				const timeBar = this.renderBar(timeRatio, barWidth)
+				const costBar = this.renderBar(costRatio, barWidth)
+				lines.push(truncateToWidth(`  ${timeLabel} ${timeBar} ${timeStats}    ${costLabel} ${costBar} ${costStats}`, width, ''))
+			} else {
+				// Stacked layout for narrow terminals
+				const barWidth = Math.max(minBarWidth, layoutWidth - visibleWidth(timeLabel) - visibleWidth(timeStats) - 6)
+				const timeBar = this.renderBar(timeRatio, barWidth)
+				const costBar = this.renderBar(costRatio, barWidth)
+				lines.push(truncateToWidth(`  ${timeLabel} ${timeBar} ${timeStats}`, width, ''))
+				lines.push(truncateToWidth(`  ${costLabel} ${costBar} ${costStats}`, width, ''))
+			}
 		}
 
 		// Summary
@@ -189,10 +214,10 @@ export class FleetProgressComponent implements Component {
 
 		let summary = `${completedCount}/${totalCount} complete`
 		if (failedCount > 0) summary += `, ${failedCount} failed`
-		if (elapsed > 0 && !state.sessionComplete) summary += ` | ${this.formatElapsed(elapsed)}`
-		if (state.sessionComplete) summary += ` | ${this.formatElapsed(state.totalDurationMs)} total`
+		if (elapsed > 0 && !state.sessionComplete) summary += ` | ${formatElapsed(elapsed)}`
+		if (state.sessionComplete) summary += ` | ${formatElapsed(state.totalDurationMs)} total`
 
-		lines.push(truncateToWidth(`  ${th.fg(c.summary, summary)}`, w))
+		lines.push(truncateToWidth(`  ${th.fg(c.summary, summary)}`, width, ''))
 
 		return lines
 	}
@@ -211,7 +236,7 @@ export class FleetProgressComponent implements Component {
 		}
 
 		const coloredIcon = th.fg(iconColor, icon)
-		const name = agent.name.length > 14 ? agent.name.slice(0, 13) + '\u2026' : agent.name
+		const name = truncateToWidth(agent.name, 14, '\u2026')
 		const coloredName = th.fg(c.agentName, name.padEnd(14))
 
 		const cost = agent.costUsd > 0 ? formatUsd(agent.costUsd) : '-'
@@ -236,15 +261,14 @@ export class FleetProgressComponent implements Component {
 			const error = this.errors.get(agent.name)
 			if (error) {
 				const firstLine = error.split('\n')[0] ?? 'unknown error'
-				items.push(th.fg(c.statusFailed, firstLine.length > 70 ? firstLine.slice(0, 69) + '\u2026' : firstLine))
+				items.push(th.fg(c.statusFailed, truncateToWidth(firstLine, 70, '\u2026')))
 			} else {
 				items.push(th.fg(c.statusFailed, 'failed'))
 			}
 			const logPath = this.logPaths.get(agent.name)
 			if (logPath) {
 				const label = `log: ${logPath}`
-				const truncated = label.length > 70 ? label.slice(0, 69) + '\u2026' : label
-				items.push(th.fg(c.activity, truncated))
+				items.push(th.fg(c.activity, truncateToWidth(label, 70, '\u2026')))
 			}
 			return items
 		}
@@ -259,8 +283,7 @@ export class FleetProgressComponent implements Component {
 			const recent = this.activityStore.getRecentActivities(agent.name, maxItems)
 			if (recent.length > 0) {
 				return recent.map((entry) => {
-					const text = entry.text.length > 70 ? entry.text.slice(0, 69) + '\u2026' : entry.text
-					return th.fg(c.activity, text)
+					return th.fg(c.activity, truncateToWidth(entry.text, 70, '\u2026'))
 				})
 			}
 		}
@@ -281,43 +304,8 @@ export class FleetProgressComponent implements Component {
 		return th.fg(c.barFilled, BAR_FILLED.repeat(filled)) + th.fg(c.barEmpty, BAR_EMPTY.repeat(empty))
 	}
 
-	private collectAgentRows(state: FleetState): AgentRow[] {
-		const rows: AgentRow[] = []
-		const seen = new Set<string>()
-
-		for (const [name, spec] of state.specialists) {
-			seen.add(name)
-			const cost = state.costs.get(name)
-			rows.push({
-				name,
-				status: spec.status,
-				costUsd: cost?.costUsd ?? 0,
-				totalTokens: (cost?.inputTokens ?? 0) + (cost?.outputTokens ?? 0),
-				startedAt: spec.startedAt,
-				completedAt: spec.completedAt,
-			})
-		}
-
-		for (const name of state.members) {
-			if (!seen.has(name)) {
-				rows.push({ name, status: 'queued', costUsd: 0, totalTokens: 0, startedAt: null, completedAt: null })
-			}
-		}
-
-		return rows
-	}
-
 	private elapsedMs(startedAt: string | null): number {
 		if (!startedAt) return 0
 		return Math.max(0, Date.now() - new Date(startedAt).getTime())
-	}
-
-	private formatElapsed(ms: number): string {
-		if (ms <= 0) return '0s'
-		const totalSeconds = Math.floor(ms / 1000)
-		const minutes = Math.floor(totalSeconds / 60)
-		const seconds = totalSeconds % 60
-		if (minutes === 0) return `${seconds}s`
-		return `${minutes}m ${seconds}s`
 	}
 }
