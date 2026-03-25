@@ -240,23 +240,52 @@ export async function rotateSessionLogs(logsRootDir: string, keepCount: number):
 }
 
 /**
- * Read the last N lines from a file. Returns empty array on ENOENT or n <= 0.
+ * Read the last N lines from a file by seeking from the end in chunks.
+ * Does NOT read the entire file — only reads enough to find N newlines.
+ * Returns empty array on ENOENT or n <= 0.
  * Normalizes CRLF to LF. Handles files with no trailing newline (includes partial last line).
  * Never throws.
  */
 export async function tailLines(filePath: string, n: number): Promise<string[]> {
 	if (n <= 0) return []
 	try {
-		const buf = await fs.readFile(filePath)
-		const content = buf.toString('utf-8').replace(/\r\n/g, '\n')
-		if (content.length === 0) return []
+		const handle = await fs.open(filePath, 'r')
+		try {
+			const stat = await handle.stat()
+			if (stat.size === 0) return []
 
-		// Split, but handle missing trailing newline
-		const lines = content.endsWith('\n')
-			? content.slice(0, -1).split('\n')
-			: content.split('\n')
+			const CHUNK_SIZE = 65536 // 64KB chunks
+			const chunks: Buffer[] = []
+			let position = stat.size
+			let linesFound = 0
 
-		return lines.slice(-n)
+			// Read backward in chunks until we find enough newlines
+			while (position > 0 && linesFound <= n) {
+				const readSize = Math.min(CHUNK_SIZE, position)
+				position -= readSize
+				const buf = Buffer.alloc(readSize)
+				await handle.read(buf, 0, readSize, position)
+				chunks.unshift(buf)
+
+				// Count newlines in this chunk
+				for (let i = 0; i < readSize; i++) {
+					if (buf[i] === 0x0A) linesFound++
+				}
+			}
+
+			// Decode the assembled buffer as UTF-8 (single decode avoids multibyte split issues)
+			const content = Buffer.concat(chunks).toString('utf-8').replace(/\r\n/g, '\n')
+			if (content.length === 0) return []
+
+			// Split, handle trailing newline
+			const lines = content.endsWith('\n')
+				? content.slice(0, -1).split('\n')
+				: content.split('\n')
+
+			return lines.slice(-n)
+		} finally {
+			await handle.close()
+		}
 	} catch (err: unknown) {
 		if (err && typeof err === 'object' && 'code' in err && (err as { code: string }).code === 'ENOENT') {
 			return []
