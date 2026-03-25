@@ -73,7 +73,7 @@ export function formatAgentElapsed(
 	const startMs = new Date(startedAt).getTime()
 	if (!Number.isFinite(startMs)) return '-'
 
-	if (completedAt) {
+	if (completedAt !== null) {
 		const endMs = new Date(completedAt).getTime()
 		if (!Number.isFinite(endMs)) return '-'
 		return formatElapsed(Math.max(0, endMs - startMs))
@@ -111,8 +111,7 @@ function formatAgentTreeRow(
 	const cost = agent.costUsd > 0 ? formatUsd(agent.costUsd) : '-'
 	const tokens = agent.totalTokens > 0 ? formatTokens(agent.totalTokens) : '-'
 	const elapsed = formatAgentElapsed(agent.startedAt, agent.completedAt)
-	const elapsedStr = elapsed !== '-' ? ` ${elapsed}` : ''
-	const prefix = `  ${branch} ${icon} ${name} ${cost.padStart(7)} ${tokens.padStart(6)}${elapsedStr}`
+	const prefix = `  ${branch} ${icon} ${name} ${cost.padStart(7)} ${tokens.padStart(6)} ${elapsed.padStart(7)}`
 
 	if (activity && agent.status === 'running') {
 		return `${prefix}  ${activity}`

@@ -327,4 +327,8 @@ describe('formatAgentElapsed', () => {
 		const ts = '2026-03-25T12:00:00.000Z'
 		expect(formatAgentElapsed(ts, ts)).toBe('0s')
 	})
+
+	it('returns dash for empty string completedAt', () => {
+		expect(formatAgentElapsed('2026-03-25T12:00:00.000Z', '')).toBe('-')
+	})
 })
