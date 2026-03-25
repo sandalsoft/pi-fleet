@@ -5,6 +5,7 @@ import {
 	formatTokens,
 	formatUsd,
 	progressBar,
+	formatAgentElapsed,
 } from '../../src/status/formatter.js'
 import { emptyFleetState, type FleetState } from '../../src/session/state.js'
 
@@ -27,6 +28,8 @@ function populatedState(): FleetState {
 		worktreePath: '/wt/dev',
 		model: 'claude-sonnet-4-20250514',
 		status: 'completed',
+		startedAt: null,
+		completedAt: null,
 	})
 	state.specialists.set('reviewer', {
 		agentName: 'reviewer',
@@ -35,6 +38,8 @@ function populatedState(): FleetState {
 		worktreePath: '/wt/rev',
 		model: 'claude-sonnet-4-20250514',
 		status: 'running',
+		startedAt: null,
+		completedAt: null,
 	})
 
 	state.costs.set('developer', {
@@ -279,5 +284,47 @@ describe('formatStatusLine', () => {
 
 		expect(line).toContain('Fleet:')
 		expect(line).not.toContain('/ $')
+	})
+})
+
+describe('formatAgentElapsed', () => {
+	const fixedNow = new Date('2026-03-25T12:05:00.000Z').getTime()
+
+	it('returns dash for null startedAt', () => {
+		expect(formatAgentElapsed(null, null)).toBe('-')
+	})
+
+	it('returns dash for NaN startedAt', () => {
+		expect(formatAgentElapsed('not-a-date', null)).toBe('-')
+	})
+
+	it('returns dash for NaN completedAt', () => {
+		expect(formatAgentElapsed('2026-03-25T12:00:00.000Z', 'bad-date')).toBe('-')
+	})
+
+	it('shows elapsed for running agent using now parameter', () => {
+		const result = formatAgentElapsed('2026-03-25T12:00:00.000Z', null, fixedNow)
+		expect(result).toBe('5m 0s')
+	})
+
+	it('shows duration for completed agent', () => {
+		const result = formatAgentElapsed(
+			'2026-03-25T12:00:00.000Z',
+			'2026-03-25T12:02:30.000Z',
+		)
+		expect(result).toBe('2m 30s')
+	})
+
+	it('clamps negative duration to 0s', () => {
+		const result = formatAgentElapsed(
+			'2026-03-25T12:05:00.000Z',
+			'2026-03-25T12:00:00.000Z',
+		)
+		expect(result).toBe('0s')
+	})
+
+	it('returns 0s for zero-length duration', () => {
+		const ts = '2026-03-25T12:00:00.000Z'
+		expect(formatAgentElapsed(ts, ts)).toBe('0s')
 	})
 })

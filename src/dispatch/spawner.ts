@@ -515,6 +515,8 @@ function buildSpawnResult(
 		worktreePath,
 		model,
 		status: raw.exitCode === 0 ? 'completed' : 'failed',
+		startedAt: null,
+		completedAt: null,
 		abortController,
 		process: raw.process,
 	}

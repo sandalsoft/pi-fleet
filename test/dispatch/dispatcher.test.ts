@@ -96,6 +96,8 @@ function makeSpawnResult(
 			worktreePath: '/tmp/test',
 			model: 'sonnet',
 			status,
+			startedAt: null,
+			completedAt: null,
 			abortController: new AbortController(),
 			process: {} as any,
 		},
