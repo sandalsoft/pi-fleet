@@ -93,6 +93,8 @@ const SpecialistFailedPayload = z.object({
 	agentName: z.string(),
 	runId: z.string(),
 	error: z.string().optional(),
+	/** Repo-relative path to the agent's JSONL log file. */
+	logPath: z.string().optional(),
 })
 
 const CostUpdatePayload = z.object({

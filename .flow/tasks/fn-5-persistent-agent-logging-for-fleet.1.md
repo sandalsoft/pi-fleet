@@ -1,10 +1,9 @@
 ## Description
 ## Done summary
-TBD
-
+Added AgentLogger module with per-agent JSONL write streams, meta.json lifecycle, log rotation via base36-filtered session directories, and tailLines utility. Includes stream error handling, name validation, idempotent close with timeout fallback, and .pi/logs/ gitignore entry. 24 new tests cover all acceptance criteria.
 ## Evidence
-- Commits:
-- Tests:
+- Commits: c6e9584, fadf99d
+- Tests: npm test, npm run typecheck
 - PRs:
 ## Approach
 

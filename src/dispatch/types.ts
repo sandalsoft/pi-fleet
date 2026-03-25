@@ -89,6 +89,8 @@ export interface SpawnResult {
 	runtime: SpecialistRuntime
 	report: string
 	usage: Usage
+	/** Exit code from the subprocess. */
+	exitCode: number
 	/** Stderr output from the subprocess (for error diagnostics). */
 	stderr: string
 	/** Error details extracted from JSONL error events and failed tool results. */

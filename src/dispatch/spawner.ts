@@ -519,5 +519,5 @@ function buildSpawnResult(
 		process: raw.process,
 	}
 
-	return { runtime, report, usage, stderr: raw.stderr, errorDetails }
+	return { runtime, report, usage, exitCode: raw.exitCode, stderr: raw.stderr, errorDetails }
 }

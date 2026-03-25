@@ -7,7 +7,7 @@ import { handleSteer } from './steer/handler.js'
 import { runConfigEditor } from './config/editor.js'
 import { FleetLogOverlay } from './status/log-overlay.js'
 import { handleStatus, updateProgressWidget, clearProgressWidget } from './status/display.js'
-import { getFleetState, setFleetState, setFleetErrors, getFleetErrors, setActivityStore, getActivityStore } from './session/runtime-store.js'
+import { getFleetState, setFleetState, setFleetErrors, getFleetErrors, setActivityStore, getActivityStore, setLogDir, getLogDir } from './session/runtime-store.js'
 import {
 	createEventLogWriter,
 	createEventLogReader,
@@ -35,6 +35,7 @@ import { WorktreeManager } from './worktree/manager.js'
 import { WorktreePool } from './worktree/pool.js'
 import { installSignalHandlers, gracefulShutdown } from './resources/shutdown.js'
 import { fullCleanup } from './worktree/cleanup.js'
+import { rotateSessionLogs, KEEP_LOG_SESSIONS } from './dispatch/agent-logger.js'
 
 // Runtime-available APIs not yet in the ExtensionAPI type definitions.
 type PiRuntime = ExtensionAPI & {
@@ -295,6 +296,22 @@ export default function piFleet(pi: ExtensionAPI): void {
 				await pool.preCreate(Math.min(firstWaveSize, team.constraints.maxConcurrency), ctx)
 			}
 
+			// Create log directory for persistent agent logging
+			const logsRootDir = path.join(repoRoot, '.pi', 'logs')
+			let logDir: string | undefined
+			try {
+				logDir = path.join(logsRootDir, sessionId)
+				await fs.mkdir(logDir, { recursive: true })
+				setLogDir(logDir)
+			} catch {
+				console.warn('[pi-fleet] Log dir creation failed')
+				logDir = undefined
+				setLogDir(null)
+			}
+			if (logDir) {
+				try { await rotateSessionLogs(logsRootDir, KEEP_LOG_SESSIONS) } catch { console.warn('[pi-fleet] Rotation failed') }
+			}
+
 			// Dispatch with worktree pool and cost tracking
 			const dispatchResult = await dispatch({
 				pi,
@@ -317,6 +334,7 @@ export default function piFleet(pi: ExtensionAPI): void {
 					limitsMonitor.check()
 				},
 				analysisModel: ctx.model,
+				logDir,
 			})
 
 			state = dispatchResult.state
@@ -491,10 +509,14 @@ export default function piFleet(pi: ExtensionAPI): void {
 				return
 			}
 
+			const currentLogDir = getLogDir()
 			const lines: string[] = []
 			for (const [agent, error] of errors) {
 				lines.push(`--- ${agent} ---`)
 				lines.push(error)
+				if (currentLogDir) {
+					lines.push(`Log: .pi/logs/${path.basename(currentLogDir)}/${agent}.jsonl`)
+				}
 				lines.push('')
 			}
 			ctx.ui.setWidget('fleet-errors', lines, { placement: 'aboveEditor' })

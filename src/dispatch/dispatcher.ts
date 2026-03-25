@@ -30,6 +30,7 @@ import { ActivityStore } from '../status/activity-store.js'
 import { composePrompt } from './prompt-composer.js'
 import { consolidateReports, type SpecialistReport } from './consolidator.js'
 import { updateProgressWidget } from '../status/display.js'
+import { AgentLogger } from './agent-logger.js'
 
 export interface DispatcherOpts {
 	pi: ExtensionAPI
@@ -50,6 +51,8 @@ export interface DispatcherOpts {
 	onUsage?: (agentName: string, model: string, usage: import('./types.js').Usage) => void
 	/** LLM model for failure analysis. If provided, failed agents get an LLM-generated diagnosis. */
 	analysisModel?: import('@mariozechner/pi-ai').Model<any>
+	/** If provided, per-agent JSONL/stderr/meta logs are written to this directory. */
+	logDir?: string
 }
 
 export interface DispatchResult {
@@ -89,6 +92,7 @@ export async function dispatch(opts: DispatcherOpts): Promise<DispatchResult> {
 		releaseWorktree,
 		onUsage,
 		analysisModel,
+		logDir,
 	} = opts
 	let { state } = opts
 
@@ -96,6 +100,8 @@ export async function dispatch(opts: DispatcherOpts): Promise<DispatchResult> {
 	const activityStore = new ActivityStore()
 	/** Per-agent error messages for failed agents. */
 	const errors = new Map<string, string>()
+	/** Per-agent loggers for persistent JSONL capture. */
+	const loggers = new Map<string, AgentLogger>()
 
 	/** Throttle: minimum ms between widget renders. */
 	const THROTTLE_MS = 200
@@ -212,6 +218,20 @@ export async function dispatch(opts: DispatcherOpts): Promise<DispatchResult> {
 				await eventLog.append(startedEvent)
 				commitState(reduceEvent(state, startedEvent))
 
+				// Create per-agent logger if logDir is available
+				let logger: AgentLogger | null = null
+				if (logDir) {
+					logger = await AgentLogger.create({
+						logDir,
+						agentName: assignment.agentName,
+						model,
+						worktreePath,
+					})
+					if (logger) {
+						loggers.set(assignment.agentName, logger)
+					}
+				}
+
 				const result = await spawnSpecialist({
 					agentName: assignment.agentName,
 					model,
@@ -221,6 +241,7 @@ export async function dispatch(opts: DispatcherOpts): Promise<DispatchResult> {
 					repoRoot,
 					cancelSignal,
 					onStreamLine: (line) => {
+						logger?.appendLine(line)
 						const activity = extractActivity(line)
 						if (activity) {
 							const added = activityStore.appendActivity(assignment.agentName, activity)
@@ -245,6 +266,19 @@ export async function dispatch(opts: DispatcherOpts): Promise<DispatchResult> {
 				})
 
 				runtimes.set(assignment.agentName, result.runtime)
+
+				// Write stderr and close logger
+				if (logger) {
+					await logger.writeStderr(result.stderr)
+					const loggerStatus = cancelSignal?.aborted
+						? 'aborted' as const
+						: undefined
+					await logger.close({
+						exitCode: result.exitCode,
+						usage: result.usage,
+						status: loggerStatus,
+					})
+				}
 
 				// Emit completion or failure
 				if (result.runtime.status === 'completed') {
@@ -281,11 +315,17 @@ export async function dispatch(opts: DispatcherOpts): Promise<DispatchResult> {
 					errors.set(assignment.agentName, diagnosis)
 					activityStore.appendActivity(assignment.agentName, diagnosis.split('\n')[0] ?? 'failed')
 
+					// Compute repo-relative log path for the failed event
+					const logPath = logDir
+						? `.pi/logs/${path.basename(logDir)}/${assignment.agentName}.jsonl`
+						: undefined
+
 					const failedEvent = createFleetEvent<SpecialistFailedEvent>({
 						type: 'specialist_failed',
 						agentName: assignment.agentName,
 						runId: result.runtime.runId,
 						error: diagnosis.split('\n')[0]?.slice(0, 200) ?? 'Unknown error',
+						logPath,
 					})
 					await eventLog.append(failedEvent)
 					commitState(reduceEvent(state, failedEvent))
@@ -335,6 +375,11 @@ export async function dispatch(opts: DispatcherOpts): Promise<DispatchResult> {
 
 	} finally {
 		clearInterval(refreshInterval)
+		if (loggers.size > 0) {
+			await Promise.allSettled(
+				[...loggers.values()].map((l) => l.close({ status: 'aborted' }))
+			)
+		}
 	}
 
 	// 4. Consolidate
