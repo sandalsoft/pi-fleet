@@ -7,7 +7,7 @@ import { handleSteer } from './steer/handler.js'
 import { runConfigEditor } from './config/editor.js'
 import { FleetLogOverlay } from './status/log-overlay.js'
 import { handleStatus, updateProgressWidget, clearProgressWidget } from './status/display.js'
-import { getFleetState, setFleetState, setFleetErrors, getFleetErrors, setActivityStore, getActivityStore, setLogDir, getLogDir } from './session/runtime-store.js'
+import { getFleetState, setFleetState, setFleetErrors, getFleetErrors, setActivityStore, getActivityStore, setLogDir, setLogPaths, getLogPaths } from './session/runtime-store.js'
 import {
 	createEventLogWriter,
 	createEventLogReader,
@@ -340,6 +340,7 @@ export default function piFleet(pi: ExtensionAPI): void {
 			state = dispatchResult.state
 			setFleetState(state)
 			setFleetErrors(dispatchResult.errors)
+			setLogPaths(dispatchResult.logPaths)
 			setActivityStore(dispatchResult.activityStore)
 			updateProgressWidget({ ui: ctx.ui }, state, undefined, undefined, dispatchResult.errors)
 
@@ -509,13 +510,14 @@ export default function piFleet(pi: ExtensionAPI): void {
 				return
 			}
 
-			const currentLogDir = getLogDir()
+			const paths = getLogPaths()
 			const lines: string[] = []
 			for (const [agent, error] of errors) {
 				lines.push(`--- ${agent} ---`)
 				lines.push(error)
-				if (currentLogDir) {
-					lines.push(`Log: .pi/logs/${path.basename(currentLogDir)}/${agent}.jsonl`)
+				const lp = paths.get(agent)
+				if (lp) {
+					lines.push(`Log: ${lp}`)
 				}
 				lines.push('')
 			}

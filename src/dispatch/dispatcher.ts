@@ -63,6 +63,8 @@ export interface DispatchResult {
 	completedBranches: Array<{ agentName: string; branch: string }>
 	/** Error messages keyed by agent name (for failed agents). */
 	errors: Map<string, string>
+	/** Repo-relative log file paths keyed by agent name (for failed agents with logs). */
+	logPaths: Map<string, string>
 	/** Activity history store for /fleet-log. */
 	activityStore: ActivityStore
 }
@@ -100,6 +102,8 @@ export async function dispatch(opts: DispatcherOpts): Promise<DispatchResult> {
 	const activityStore = new ActivityStore()
 	/** Per-agent error messages for failed agents. */
 	const errors = new Map<string, string>()
+	/** Per-agent repo-relative log file paths for failed agents. */
+	const logPaths = new Map<string, string>()
 	/** Per-agent loggers for persistent JSONL capture. */
 	const loggers = new Map<string, AgentLogger>()
 
@@ -315,10 +319,13 @@ export async function dispatch(opts: DispatcherOpts): Promise<DispatchResult> {
 					errors.set(assignment.agentName, diagnosis)
 					activityStore.appendActivity(assignment.agentName, diagnosis.split('\n')[0] ?? 'failed')
 
-					// Compute repo-relative log path for the failed event
-					const logPath = logDir
-						? `.pi/logs/${path.basename(logDir)}/${assignment.agentName}.jsonl`
+					// Compute repo-relative log path for the failed event (only if logger was created)
+					const logPath = logger
+						? `.pi/logs/${path.basename(logDir!)}/${assignment.agentName}.jsonl`
 						: undefined
+					if (logPath) {
+						logPaths.set(assignment.agentName, logPath)
+					}
 
 					const failedEvent = createFleetEvent<SpecialistFailedEvent>({
 						type: 'specialist_failed',
@@ -398,6 +405,7 @@ export async function dispatch(opts: DispatcherOpts): Promise<DispatchResult> {
 		failedAgents: consolidation.failedAgents,
 		completedBranches,
 		errors,
+		logPaths,
 		activityStore,
 	}
 }
