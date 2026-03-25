@@ -6,6 +6,7 @@ import {
 	formatUsd,
 	progressBar,
 	formatAgentElapsed,
+	collectAgentRows,
 } from '../../src/status/formatter.js'
 import { emptyFleetState, type FleetState } from '../../src/session/state.js'
 
@@ -330,5 +331,108 @@ describe('formatAgentElapsed', () => {
 
 	it('returns dash for empty string completedAt', () => {
 		expect(formatAgentElapsed('2026-03-25T12:00:00.000Z', '')).toBe('-')
+	})
+})
+
+describe('collectAgentRows', () => {
+	it('returns rows for started and queued agents', () => {
+		const state = populatedState()
+		const rows = collectAgentRows(state)
+
+		expect(rows.length).toBe(3)
+		expect(rows[0].name).toBe('developer')
+		expect(rows[0].status).toBe('completed')
+		expect(rows[1].name).toBe('reviewer')
+		expect(rows[1].status).toBe('running')
+		expect(rows[2].name).toBe('architect')
+		expect(rows[2].status).toBe('queued')
+	})
+
+	it('computes totalTokens from input+output', () => {
+		const state = populatedState()
+		const rows = collectAgentRows(state)
+
+		expect(rows[0].totalTokens).toBe(7000) // 5000+2000
+		expect(rows[1].totalTokens).toBe(4000) // 3000+1000
+	})
+
+	it('returns empty array for empty state', () => {
+		const rows = collectAgentRows(emptyFleetState())
+		expect(rows).toEqual([])
+	})
+
+	it('includes startedAt and completedAt from specialist record', () => {
+		const state = populatedState()
+		state.specialists.get('developer')!.startedAt = '2026-03-25T12:00:00.000Z'
+		state.specialists.get('developer')!.completedAt = '2026-03-25T12:02:00.000Z'
+
+		const rows = collectAgentRows(state)
+		expect(rows[0].startedAt).toBe('2026-03-25T12:00:00.000Z')
+		expect(rows[0].completedAt).toBe('2026-03-25T12:02:00.000Z')
+	})
+})
+
+describe('formatter truncation', () => {
+	it('truncates long agent names with ellipsis in tree rows', () => {
+		const state = emptyFleetState()
+		state.phase = 'executing'
+		state.members = ['very-long-agent-name-here']
+		state.specialists.set('very-long-agent-name-here', {
+			agentName: 'very-long-agent-name-here',
+			runId: 'run-001',
+			pid: 1234,
+			worktreePath: '/wt/dev',
+			model: 'sonnet',
+			status: 'running',
+			startedAt: null,
+			completedAt: null,
+		})
+
+		const lines = formatStatusTable(state)
+		const joined = lines.join('\n')
+		expect(joined).not.toContain('very-long-agent-name-here')
+		expect(joined).toContain('\u2026')
+	})
+
+	it('truncates long activity text', () => {
+		const state = populatedState()
+		const longActivity = 'x'.repeat(80)
+		const activities = new Map([['reviewer', longActivity]])
+
+		const lines = formatStatusTable(state, activities)
+		const joined = lines.join('\n')
+		expect(joined).not.toContain(longActivity)
+		expect(joined).toContain('\u2026')
+	})
+
+	it('truncates long error text for failed agents', () => {
+		const state = populatedState()
+		state.specialists.set('reviewer', {
+			...state.specialists.get('reviewer')!,
+			status: 'failed',
+		})
+		const longError = 'E'.repeat(80)
+		const errors = new Map([['reviewer', longError]])
+
+		const lines = formatStatusTable(state, undefined, errors)
+		const joined = lines.join('\n')
+		expect(joined).not.toContain(longError)
+		expect(joined).toContain('\u2026')
+	})
+
+	it('truncates long log paths for failed agents', () => {
+		const state = populatedState()
+		state.specialists.set('reviewer', {
+			...state.specialists.get('reviewer')!,
+			status: 'failed',
+		})
+		const longPath = '/very/long/' + 'path/'.repeat(20) + 'file.log'
+		const errors = new Map([['reviewer', 'some error']])
+		const logPaths = new Map([['reviewer', longPath]])
+
+		const lines = formatStatusTable(state, undefined, errors, logPaths)
+		const joined = lines.join('\n')
+		expect(joined).not.toContain(longPath)
+		expect(joined).toContain('\u2026')
 	})
 })

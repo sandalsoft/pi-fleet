@@ -252,7 +252,11 @@ Resume a session with `/fleet --resume`. The extension replays events from the s
 
 ## Resource Tracking
 
-The resource monitor tracks per-agent cost from JSONL `msg.usage` output, with model-specific pricing. Budget enforcement uses soft warnings at 80% and hard limits that trigger a 60-second graceful shutdown (SIGTERM with grace period, then SIGKILL). A bounded 30-second merge safe window prevents deadlock during budget-triggered shutdown.
+The resource monitor tracks per-agent cost from JSONL `msg.usage` output, with model-specific pricing. Each agent's cost (USD, input tokens, output tokens) is accumulated from streaming events during execution, then replaced with authoritative totals from the final spawn result to prevent double counting.
+
+Per-agent elapsed time is tracked via `startedAt` and `completedAt` timestamps on `SpecialistRecord`. Running agents display live elapsed time; completed and failed agents show total duration.
+
+Budget enforcement uses soft warnings at 80% and hard limits that trigger a 60-second graceful shutdown (SIGTERM with grace period, then SIGKILL). A bounded 30-second merge safe window prevents deadlock during budget-triggered shutdown.
 
 ## Pre-flight Checks
 
