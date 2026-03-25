@@ -90,6 +90,19 @@ export function progressBar(ratio: number, width: number = 18): string {
 	return BAR_FILLED.repeat(filled) + BAR_EMPTY.repeat(width - filled)
 }
 
+/**
+ * Truncate a plain string (no ANSI) to a maximum visible width.
+ * Uses the ellipsis character when truncated.
+ */
+function truncatePlain(text: string, maxWidth: number, ellipsis: string = '\u2026'): string {
+	if (text.length <= maxWidth) return text
+	if (maxWidth <= 0) return ''
+	if (ellipsis && maxWidth >= ellipsis.length) {
+		return text.slice(0, maxWidth - ellipsis.length) + ellipsis
+	}
+	return text.slice(0, maxWidth)
+}
+
 function statusIcon(status: 'running' | 'completed' | 'failed' | 'queued'): string {
 	return ICON[status] ?? ICON.queued
 }
@@ -107,23 +120,22 @@ function formatAgentTreeRow(
 ): string {
 	const branch = isLast ? TREE_END : TREE_MID
 	const icon = statusIcon(agent.status)
-	const name = agent.name.length > 14 ? agent.name.slice(0, 13) + '\u2026' : agent.name.padEnd(14)
+	const name = truncatePlain(agent.name, 14, '\u2026').padEnd(14)
 	const cost = agent.costUsd > 0 ? formatUsd(agent.costUsd) : '-'
 	const tokens = agent.totalTokens > 0 ? formatTokens(agent.totalTokens) : '-'
 	const elapsed = formatAgentElapsed(agent.startedAt, agent.completedAt)
 	const prefix = `  ${branch} ${icon} ${name} ${cost.padStart(7)} ${tokens.padStart(6)} ${elapsed.padStart(7)}`
 
 	if (activity && agent.status === 'running') {
-		return `${prefix}  ${activity}`
+		return `${prefix}  ${truncatePlain(activity, 50, '\u2026')}`
 	}
 	if (agent.status === 'failed') {
 		const errorStr = error
-			? (error.split('\n')[0] ?? 'unknown error').slice(0, 60)
+			? truncatePlain(error.split('\n')[0] ?? 'unknown error', 60, '\u2026')
 			: 'failed'
 		if (logPath) {
 			const label = `log: ${logPath}`
-			const truncated = label.length > 70 ? label.slice(0, 69) + '\u2026' : label
-			return `${prefix}  ${errorStr}  ${truncated}`
+			return `${prefix}  ${errorStr}  ${truncatePlain(label, 70, '\u2026')}`
 		}
 		return `${prefix}  ${errorStr}`
 	}
@@ -131,7 +143,7 @@ function formatAgentTreeRow(
 	return prefix
 }
 
-interface AgentRow {
+export interface AgentRow {
 	name: string
 	status: 'running' | 'completed' | 'failed' | 'queued'
 	costUsd: number
@@ -140,7 +152,7 @@ interface AgentRow {
 	completedAt: string | null
 }
 
-function collectAgentRows(state: FleetState): AgentRow[] {
+export function collectAgentRows(state: FleetState): AgentRow[] {
 	const rows: AgentRow[] = []
 	const seen = new Set<string>()
 
@@ -191,9 +203,7 @@ export function formatStatusTable(state: FleetState, activities?: Map<string, st
 		const agent = agents[i]
 		const isLast = i === agents.length - 1
 		const activity = activities?.get(agent.name)
-		const displayActivity = activity && activity.length > 50
-			? activity.slice(0, 49) + '\u2026'
-			: activity
+		const displayActivity = activity ? truncatePlain(activity, 50, '\u2026') : undefined
 		const error = errors?.get(agent.name)
 		const logPath = logPaths?.get(agent.name)
 		lines.push(formatAgentTreeRow(agent, isLast, displayActivity, error, logPath))

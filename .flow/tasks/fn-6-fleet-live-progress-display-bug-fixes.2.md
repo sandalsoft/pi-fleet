@@ -58,8 +58,8 @@ Add `startedAt` and `completedAt` timestamps to `SpecialistRecord` so the widget
 - [ ] `npm run typecheck` passes
 
 ## Done summary
-
-
-
+Added startedAt and completedAt timestamps to SpecialistRecord, wired them through the event reducer, and created a formatAgentElapsed() helper with null/NaN guards and a now parameter for deterministic testing. Updated all construction sites across source and test files, and always display the elapsed column (including `-` for queued agents).
 ## Evidence
-
+- Commits: d29831dfc7c17e6b26856b2a6e8e1e49b94e3b0e, 7403823a5f0277eaefb9163b9466beebcecf5873
+- Tests: npm test, npm run typecheck, npm run build
+- PRs:
