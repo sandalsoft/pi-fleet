@@ -232,6 +232,18 @@ Your steering message here.
 
 Agents read their scratchpad cooperatively between tool calls. Delivery is best-effort -- the agent may finish before reading. Agent names are validated against the running roster; path separators (`/`, `\`, `..`) are rejected to prevent traversal.
 
+## Persistent Logs
+
+Agent subprocess output is captured to `.pi/logs/{sessionId}/` during fleet sessions. Each agent gets three files:
+
+- `{agent}.jsonl` -- normalized JSONL stdout lines
+- `{agent}.stderr.log` -- stderr output (always present, may be empty)
+- `{agent}.meta.json` -- metadata (model, exit code, duration, status)
+
+Use `/fleet-logs` to browse sessions and view agent output. Use `/fleet-logs <agent> --raw` for raw JSONL.
+
+Log files are gitignored (`.pi/logs/` in `.gitignore`). They may contain sensitive data from agent tool results (file contents, environment variables, API responses). Handle with care when sharing or debugging. Only the last 5 sessions are retained; older sessions are rotated out on each new fleet run.
+
 ## Session Persistence and Resume
 
 Fleet sessions are persisted as typed JSONL events via `pi.appendEntry()`. Each event carries a `schemaVersion`, `type`, and `timestamp`. Unknown event types are preserved but skipped by state reducers (forward compatibility).

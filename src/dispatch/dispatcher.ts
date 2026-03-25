@@ -116,7 +116,7 @@ export async function dispatch(opts: DispatcherOpts): Promise<DispatchResult> {
 		state = s
 		setFleetState(state)
 		lastRenderTime = Date.now()
-		updateProgressWidget(ctx, state, activityStore, undefined, errors)
+		updateProgressWidget(ctx, state, activityStore, undefined, errors, logPaths)
 	}
 
 	/** Refresh the widget without a state change. Throttled to ~5 renders/sec. */
@@ -124,7 +124,7 @@ export async function dispatch(opts: DispatcherOpts): Promise<DispatchResult> {
 		const now = Date.now()
 		if (now - lastRenderTime < THROTTLE_MS) return
 		lastRenderTime = now
-		updateProgressWidget(ctx, state, activityStore, undefined, errors)
+		updateProgressWidget(ctx, state, activityStore, undefined, errors, logPaths)
 	}
 
 	// 1. Record base commit SHA
