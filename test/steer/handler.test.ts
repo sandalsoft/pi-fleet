@@ -30,6 +30,8 @@ function runningState(): FleetState {
 		worktreePath: '/tmp/wt/developer',
 		model: 'claude-sonnet-4-20250514',
 		status: 'running',
+		startedAt: null,
+		completedAt: null,
 	})
 	state.specialists.set('reviewer', {
 		agentName: 'reviewer',
@@ -38,6 +40,8 @@ function runningState(): FleetState {
 		worktreePath: '/tmp/wt/reviewer',
 		model: 'claude-sonnet-4-20250514',
 		status: 'running',
+		startedAt: null,
+		completedAt: null,
 	})
 	state.specialists.set('architect', {
 		agentName: 'architect',
@@ -46,6 +50,8 @@ function runningState(): FleetState {
 		worktreePath: '/tmp/wt/architect',
 		model: 'claude-opus-4-20250514',
 		status: 'completed',
+		startedAt: null,
+		completedAt: null,
 	})
 	return state
 }

@@ -120,6 +120,8 @@ describe('reconstructState from event sequences', () => {
 		expect(dev.worktreePath).toBe('/worktrees/developer')
 		expect(dev.model).toBe('claude-sonnet-4-20250514')
 		expect(dev.status).toBe('running')
+		expect(dev.startedAt).toBe(ts)
+		expect(dev.completedAt).toBeNull()
 	})
 
 	it('specialist_completed updates status and tracks completion', () => {
@@ -129,6 +131,8 @@ describe('reconstructState from event sequences', () => {
 		])
 		const dev = state.specialists.get('developer')!
 		expect(dev.status).toBe('completed')
+		expect(dev.completedAt).toBe(ts)
+		expect(dev.startedAt).toBe(ts)
 		expect(state.tasks!.completedAgents).toContain('developer')
 	})
 
@@ -146,6 +150,7 @@ describe('reconstructState from event sequences', () => {
 		const state = reconstructState(events)
 		const dev = state.specialists.get('developer')!
 		expect(dev.status).toBe('failed')
+		expect(dev.completedAt).toBe(ts)
 		expect(state.tasks!.failedAgents).toContain('developer')
 	})
 

@@ -40,7 +40,7 @@ export function formatUsd(amount: number): string {
 	return `$${amount.toFixed(2)}`
 }
 
-function formatElapsed(ms: number): string {
+export function formatElapsed(ms: number): string {
 	if (ms <= 0) return '0s'
 	const totalSeconds = Math.floor(ms / 1000)
 	const minutes = Math.floor(totalSeconds / 60)
@@ -52,6 +52,36 @@ function formatElapsed(ms: number): string {
 function elapsedMs(startedAt: string | null): number {
 	if (!startedAt) return 0
 	return Math.max(0, Date.now() - new Date(startedAt).getTime())
+}
+
+/**
+ * Format per-agent elapsed time from timestamps.
+ *
+ * Returns `-` for null startedAt or unparseable timestamps.
+ * Running agents (completedAt null): elapsed = now - startedAt.
+ * Completed/failed agents: elapsed = completedAt - startedAt.
+ * Clamps negative durations to zero (handles clock skew).
+ *
+ * @param now - optional fixed timestamp for deterministic testing
+ */
+export function formatAgentElapsed(
+	startedAt: string | null,
+	completedAt: string | null,
+	now?: number,
+): string {
+	if (!startedAt) return '-'
+	const startMs = new Date(startedAt).getTime()
+	if (!Number.isFinite(startMs)) return '-'
+
+	if (completedAt) {
+		const endMs = new Date(completedAt).getTime()
+		if (!Number.isFinite(endMs)) return '-'
+		return formatElapsed(Math.max(0, endMs - startMs))
+	}
+
+	// Running: elapsed from now
+	const currentMs = now ?? Date.now()
+	return formatElapsed(Math.max(0, currentMs - startMs))
 }
 
 export function progressBar(ratio: number, width: number = 18): string {
@@ -80,7 +110,9 @@ function formatAgentTreeRow(
 	const name = agent.name.length > 14 ? agent.name.slice(0, 13) + '\u2026' : agent.name.padEnd(14)
 	const cost = agent.costUsd > 0 ? formatUsd(agent.costUsd) : '-'
 	const tokens = agent.totalTokens > 0 ? formatTokens(agent.totalTokens) : '-'
-	const prefix = `  ${branch} ${icon} ${name} ${cost.padStart(7)} ${tokens.padStart(6)}`
+	const elapsed = formatAgentElapsed(agent.startedAt, agent.completedAt)
+	const elapsedStr = elapsed !== '-' ? ` ${elapsed}` : ''
+	const prefix = `  ${branch} ${icon} ${name} ${cost.padStart(7)} ${tokens.padStart(6)}${elapsedStr}`
 
 	if (activity && agent.status === 'running') {
 		return `${prefix}  ${activity}`
@@ -105,6 +137,8 @@ interface AgentRow {
 	status: 'running' | 'completed' | 'failed' | 'queued'
 	costUsd: number
 	totalTokens: number
+	startedAt: string | null
+	completedAt: string | null
 }
 
 function collectAgentRows(state: FleetState): AgentRow[] {
@@ -120,13 +154,15 @@ function collectAgentRows(state: FleetState): AgentRow[] {
 			status: spec.status,
 			costUsd: cost?.costUsd ?? 0,
 			totalTokens: (cost?.inputTokens ?? 0) + (cost?.outputTokens ?? 0),
+			startedAt: spec.startedAt,
+			completedAt: spec.completedAt,
 		})
 	}
 
 	// Queued agents (in members list but not started)
 	for (const name of state.members) {
 		if (!seen.has(name)) {
-			rows.push({ name, status: 'queued', costUsd: 0, totalTokens: 0 })
+			rows.push({ name, status: 'queued', costUsd: 0, totalTokens: 0, startedAt: null, completedAt: null })
 		}
 	}
 

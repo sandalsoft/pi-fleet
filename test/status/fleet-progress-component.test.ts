@@ -38,6 +38,8 @@ function populatedState(): FleetState {
 		worktreePath: '/wt/dev',
 		model: 'sonnet',
 		status: 'completed',
+		startedAt: null,
+		completedAt: null,
 	})
 	state.specialists.set('reviewer', {
 		agentName: 'reviewer',
@@ -46,6 +48,8 @@ function populatedState(): FleetState {
 		worktreePath: '/wt/rev',
 		model: 'sonnet',
 		status: 'running',
+		startedAt: null,
+		completedAt: null,
 	})
 	state.costs.set('developer', {
 		agentName: 'developer',

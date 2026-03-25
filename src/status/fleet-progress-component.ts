@@ -2,7 +2,7 @@ import type { Component, TUI } from '@mariozechner/pi-tui'
 import { truncateToWidth, visibleWidth } from '@mariozechner/pi-tui'
 import type { Theme, ThemeColor } from '@mariozechner/pi-coding-agent'
 import type { FleetState } from '../session/state.js'
-import { formatTokens, formatUsd } from './formatter.js'
+import { formatTokens, formatUsd, formatAgentElapsed } from './formatter.js'
 import type { ActivityStore } from './activity-store.js'
 
 // --- Configurable color mapping ---
@@ -60,6 +60,8 @@ interface AgentRow {
 	status: 'running' | 'completed' | 'failed' | 'queued'
 	costUsd: number
 	totalTokens: number
+	startedAt: string | null
+	completedAt: string | null
 }
 
 /**
@@ -214,7 +216,9 @@ export class FleetProgressComponent implements Component {
 
 		const cost = agent.costUsd > 0 ? formatUsd(agent.costUsd) : '-'
 		const tokens = agent.totalTokens > 0 ? formatTokens(agent.totalTokens) : '-'
-		const statsBlock = th.fg(c.stats, `${cost.padStart(7)} ${tokens.padStart(6)}`)
+		const elapsed = formatAgentElapsed(agent.startedAt, agent.completedAt)
+		const elapsedStr = elapsed !== '-' ? ` ${elapsed}` : ''
+		const statsBlock = th.fg(c.stats, `${cost.padStart(7)} ${tokens.padStart(6)}${elapsedStr}`)
 
 		return `  ${treeBranch} ${coloredIcon} ${coloredName} ${statsBlock}`
 	}
@@ -290,12 +294,14 @@ export class FleetProgressComponent implements Component {
 				status: spec.status,
 				costUsd: cost?.costUsd ?? 0,
 				totalTokens: (cost?.inputTokens ?? 0) + (cost?.outputTokens ?? 0),
+				startedAt: spec.startedAt,
+				completedAt: spec.completedAt,
 			})
 		}
 
 		for (const name of state.members) {
 			if (!seen.has(name)) {
-				rows.push({ name, status: 'queued', costUsd: 0, totalTokens: 0 })
+				rows.push({ name, status: 'queued', costUsd: 0, totalTokens: 0, startedAt: null, completedAt: null })
 			}
 		}
 

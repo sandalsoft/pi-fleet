@@ -41,6 +41,8 @@ function makeSpawnResult(report: string, status: 'completed' | 'failed' = 'compl
 			worktreePath: '/tmp/wt',
 			model: 'sonnet',
 			status,
+			startedAt: null,
+			completedAt: null,
 			abortController: new AbortController(),
 			process: {} as never,
 		},
