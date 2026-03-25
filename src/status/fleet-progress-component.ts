@@ -73,6 +73,7 @@ export class FleetProgressComponent implements Component {
 	private state: FleetState | null = null
 	private activityStore: ActivityStore | null = null
 	private errors: Map<string, string> = new Map()
+	private logPaths: Map<string, string> = new Map()
 	private cachedLines: string[] | null = null
 	private cachedWidth: number | null = null
 
@@ -82,12 +83,13 @@ export class FleetProgressComponent implements Component {
 		this.colors = { ...DEFAULT_COLORS, ...colors }
 	}
 
-	update(state: FleetState, activityStore?: ActivityStore | Map<string, string>, errors?: Map<string, string>): void {
+	update(state: FleetState, activityStore?: ActivityStore | Map<string, string>, errors?: Map<string, string>, logPaths?: Map<string, string>): void {
 		this.state = state
 		if (activityStore && 'getRecentActivities' in activityStore) {
 			this.activityStore = activityStore as ActivityStore
 		}
 		if (errors) this.errors = errors
+		if (logPaths) this.logPaths = logPaths
 		this.invalidate()
 		this.tui.requestRender()
 	}
@@ -225,14 +227,23 @@ export class FleetProgressComponent implements Component {
 		const th = this.theme
 		const c = this.colors
 
-		// Failed: show error
+		// Failed: show error + log path
 		if (agent.status === 'failed') {
+			const items: string[] = []
 			const error = this.errors.get(agent.name)
 			if (error) {
 				const firstLine = error.split('\n')[0] ?? 'unknown error'
-				return [th.fg(c.statusFailed, firstLine.length > 70 ? firstLine.slice(0, 69) + '\u2026' : firstLine)]
+				items.push(th.fg(c.statusFailed, firstLine.length > 70 ? firstLine.slice(0, 69) + '\u2026' : firstLine))
+			} else {
+				items.push(th.fg(c.statusFailed, 'failed'))
 			}
-			return [th.fg(c.statusFailed, 'failed')]
+			const logPath = this.logPaths.get(agent.name)
+			if (logPath) {
+				const label = `log: ${logPath}`
+				const truncated = label.length > 70 ? label.slice(0, 69) + '\u2026' : label
+				items.push(th.fg(c.activity, truncated))
+			}
+			return items
 		}
 
 		// Queued: just show waiting

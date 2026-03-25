@@ -6,8 +6,9 @@ import { runSetupWizard } from './setup/wizard.js'
 import { handleSteer } from './steer/handler.js'
 import { runConfigEditor } from './config/editor.js'
 import { FleetLogOverlay } from './status/log-overlay.js'
+import { handleFleetLogs } from './status/fleet-logs.js'
 import { handleStatus, updateProgressWidget, clearProgressWidget } from './status/display.js'
-import { getFleetState, setFleetState, setFleetErrors, getFleetErrors, setActivityStore, getActivityStore, setLogDir, setLogPaths, getLogPaths } from './session/runtime-store.js'
+import { getFleetState, setFleetState, setFleetErrors, getFleetErrors, setActivityStore, getActivityStore, setLogDir, getLogDir, setLogPaths, getLogPaths } from './session/runtime-store.js'
 import {
 	createEventLogWriter,
 	createEventLogReader,
@@ -342,7 +343,7 @@ export default function piFleet(pi: ExtensionAPI): void {
 			setFleetErrors(dispatchResult.errors)
 			setLogPaths(dispatchResult.logPaths)
 			setActivityStore(dispatchResult.activityStore)
-			updateProgressWidget({ ui: ctx.ui }, state, undefined, undefined, dispatchResult.errors)
+			updateProgressWidget({ ui: ctx.ui }, state, undefined, undefined, dispatchResult.errors, dispatchResult.logPaths)
 
 			// Merge specialist branches back
 			const specialistBranches: SpecialistBranch[] = dispatchResult.completedBranches.map(
@@ -501,6 +502,13 @@ export default function piFleet(pi: ExtensionAPI): void {
 		},
 	})
 
+	pi.registerCommand('fleet-logs', {
+		description: 'Browse persistent agent log files from fleet sessions',
+		handler: async (args: string, ctx: ExtensionCommandContext) => {
+			await handleFleetLogs(args, { pi, ctx })
+		},
+	})
+
 	pi.registerCommand('fleet-errors', {
 		description: 'Show error details for failed agents',
 		handler: async (_args: string, ctx: ExtensionCommandContext) => {
@@ -511,6 +519,7 @@ export default function piFleet(pi: ExtensionAPI): void {
 			}
 
 			const paths = getLogPaths()
+			const logDir = getLogDir()
 			const lines: string[] = []
 			for (const [agent, error] of errors) {
 				lines.push(`--- ${agent} ---`)
@@ -518,6 +527,16 @@ export default function piFleet(pi: ExtensionAPI): void {
 				const lp = paths.get(agent)
 				if (lp) {
 					lines.push(`Log: ${lp}`)
+				} else if (logDir) {
+					// Fallback: construct path from logDir
+					const state = getFleetState()
+					const repoRoot = state?.repoRoot
+					if (repoRoot && logDir.startsWith(repoRoot)) {
+						const rel = path.relative(repoRoot, path.join(logDir, `${agent}.jsonl`))
+						lines.push(`Log: ${rel}`)
+					} else {
+						lines.push(`Log: ${path.join(logDir, `${agent}.jsonl`)}`)
+					}
 				}
 				lines.push('')
 			}
