@@ -180,7 +180,20 @@ export class AgentLogger {
 		}
 
 		try {
-			await new Promise<void>((resolve) => this._stream.end(resolve))
+			await new Promise<void>((resolve) => {
+				const timeout = setTimeout(() => {
+					this._stream.destroy()
+					resolve()
+				}, 5000)
+				this._stream.on('error', () => {
+					clearTimeout(timeout)
+					resolve()
+				})
+				this._stream.end(() => {
+					clearTimeout(timeout)
+					resolve()
+				})
+			})
 		} catch {
 			// Best effort
 		}
