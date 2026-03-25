@@ -260,6 +260,28 @@ export function reduceEvent(state: FleetState, event: FleetEvent): FleetState {
 }
 
 /**
+ * Zero all cost fields for a single agent and recalculate totalCostUsd.
+ *
+ * Used between streaming accumulation and final authoritative cost to
+ * prevent double counting: reset streaming totals, then reduce the
+ * authoritative cost_update on top.
+ */
+export function resetAgentCost(state: FleetState, agentName: string): FleetState {
+	const costs = new Map(state.costs)
+	costs.set(agentName, {
+		agentName,
+		inputTokens: 0,
+		outputTokens: 0,
+		costUsd: 0,
+	})
+	const totalCostUsd = Array.from(costs.values()).reduce(
+		(sum, c) => sum + c.costUsd,
+		0
+	)
+	return { ...state, costs, totalCostUsd }
+}
+
+/**
  * Reconstruct FleetState from a sequence of events via Array.reduce().
  */
 export function reconstructState(events: FleetEvent[]): FleetState {
