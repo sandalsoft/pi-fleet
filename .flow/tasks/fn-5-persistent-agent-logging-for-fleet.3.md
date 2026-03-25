@@ -1,10 +1,9 @@
 ## Description
 ## Done summary
-TBD
-
+Added /fleet-logs command for browsing persistent agent log sessions (list sessions, view agent meta/activity/stderr, raw JSONL mode). Enhanced /fleet-errors with getLogDir() fallback for log paths, added inline log path display in FleetProgressComponent and formatStatusTable for failed agents, and updated CLAUDE.md documentation.
 ## Evidence
-- Commits:
-- Tests:
+- Commits: ffa1786a1e1796971c936336f14c6a72545d69ee
+- Tests: npm test, npm run typecheck, npm run build
 - PRs:
 ## Approach
 
