@@ -28,19 +28,19 @@ Run tests before committing. The test suite must pass.
 
 ```
 src/
-  extension.ts          # Entrypoint: registers /fleet, /fleet-status, /fleet-steer
+  extension.ts          # Entrypoint: registers /fleet, /fleet-status, /fleet-steer, /fleet-log, /fleet-logs, /fleet-errors, /fleet-config
   preflight.ts          # preflightBootstrap() + preflightRunChecks()
   config/               # Zod schemas, YAML loaders for teams/agents/chains
   setup/                # Interactive wizard + template scaffolder
   interview/            # 8-12 question engine + team selector
   session/              # Event schema, state reducer, resume, runtime store
-  dispatch/             # DAG executor, spawner, prompt composer, consolidator
+  dispatch/             # DAG executor, spawner, prompt composer, consolidator, agent-logger
   worktree/             # Worktree pool, manager, cleanup
   merge/                # Three-way merge engine, integration branch, conflict resolver
   chain/                # Agent-chain detector, variable substitution, runner
   resources/            # Cost tracker, budget/time limits, graceful shutdown
   steer/                # Scratchpad-based steering handler
-  status/               # Status display formatter + widget handler
+  status/               # Status display formatter, widget handler, fleet-logs browser
 ```
 
 ## Test Convention
@@ -74,6 +74,7 @@ All configuration under `.pi/` relative to repo root:
 - `.pi/agents/*.md` -- agent definitions (passthrough front matter)
 - `.pi/agent-chain.yaml` -- sequential pipeline definition
 - `.pi/scratchpads/` -- agent working memory (gitignored)
+- `.pi/logs/` -- persistent agent JSONL/stderr/meta logs per session (gitignored, rotated to last 5 sessions)
 - `.pi/smoke-results.json` -- smoke test output (gitignored)
 
 ## Dependencies

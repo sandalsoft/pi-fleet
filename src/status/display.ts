@@ -82,13 +82,14 @@ export function updateProgressWidget(
 	activityStore?: ActivityStore | Map<string, string>,
 	colorOverrides?: Partial<FleetWidgetColors>,
 	errors?: Map<string, string>,
+	logPaths?: Map<string, string>,
 ): void {
 	// Always update footer status line (plain text)
 	ctx.ui.setStatus('fleet', formatStatusLine(state))
 
 	if (_progressComponent && _componentInstalled) {
 		// Fast path: component already installed, just update data
-		_progressComponent.update(state, activityStore, errors)
+		_progressComponent.update(state, activityStore, errors, logPaths)
 		return
 	}
 
@@ -103,7 +104,7 @@ export function updateProgressWidget(
 				theme as any,
 				colorOverrides,
 			)
-			_progressComponent.update(state, activityStore, errors)
+			_progressComponent.update(state, activityStore, errors, logPaths)
 			return _progressComponent
 		}, { placement: 'aboveEditor' })
 	} catch {
@@ -125,7 +126,7 @@ export function updateProgressWidget(
 		} else if (activityStore instanceof Map) {
 			for (const [k, v] of activityStore) activitiesMap.set(k, v)
 		}
-		const lines = formatStatusTable(state, activitiesMap, errors)
+		const lines = formatStatusTable(state, activitiesMap, errors, logPaths)
 		ctx.ui.setWidget('fleet-progress', lines, { placement: 'aboveEditor' })
 	}
 }

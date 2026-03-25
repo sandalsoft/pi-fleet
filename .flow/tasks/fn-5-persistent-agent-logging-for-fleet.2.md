@@ -1,10 +1,9 @@
 ## Description
 ## Done summary
-TBD
-
+Wired AgentLogger into the dispatcher loop with per-agent logger lifecycle, exitCode threading through SpawnResult, logPath on SpecialistFailedEvent, log directory creation with rotation in extension.ts (dispatcher mode only), and log path display in /fleet-errors using event-sourced paths.
 ## Evidence
-- Commits:
-- Tests:
+- Commits: 21c31dd, 932655a
+- Tests: npm test, npm run typecheck, npm run build
 - PRs:
 ## Approach
 

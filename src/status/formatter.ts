@@ -73,6 +73,7 @@ function formatAgentTreeRow(
 	isLast: boolean,
 	activity: string | undefined,
 	error: string | undefined,
+	logPath: string | undefined,
 ): string {
 	const branch = isLast ? TREE_END : TREE_MID
 	const icon = statusIcon(agent.status)
@@ -84,11 +85,17 @@ function formatAgentTreeRow(
 	if (activity && agent.status === 'running') {
 		return `${prefix}  ${activity}`
 	}
-	if (agent.status === 'failed' && error) {
-		const firstLine = error.split('\n')[0] ?? 'unknown error'
-		return `${prefix}  ${firstLine.slice(0, 60)}`
+	if (agent.status === 'failed') {
+		const errorStr = error
+			? (error.split('\n')[0] ?? 'unknown error').slice(0, 60)
+			: 'failed'
+		if (logPath) {
+			const label = `log: ${logPath}`
+			const truncated = label.length > 70 ? label.slice(0, 69) + '\u2026' : label
+			return `${prefix}  ${errorStr}  ${truncated}`
+		}
+		return `${prefix}  ${errorStr}`
 	}
-	if (agent.status === 'failed') return `${prefix}  failed`
 	if (agent.status === 'queued') return `${prefix}  waiting`
 	return prefix
 }
@@ -131,7 +138,7 @@ function collectAgentRows(state: FleetState): AgentRow[] {
  * Tree-style layout with per-agent activity shown inline.
  * Fallback for environments without TUI component support.
  */
-export function formatStatusTable(state: FleetState, activities?: Map<string, string>, errors?: Map<string, string>): string[] {
+export function formatStatusTable(state: FleetState, activities?: Map<string, string>, errors?: Map<string, string>, logPaths?: Map<string, string>): string[] {
 	const lines: string[] = []
 	const agents = collectAgentRows(state)
 
@@ -153,7 +160,8 @@ export function formatStatusTable(state: FleetState, activities?: Map<string, st
 			? activity.slice(0, 49) + '\u2026'
 			: activity
 		const error = errors?.get(agent.name)
-		lines.push(formatAgentTreeRow(agent, isLast, displayActivity, error))
+		const logPath = logPaths?.get(agent.name)
+		lines.push(formatAgentTreeRow(agent, isLast, displayActivity, error, logPath))
 	}
 
 	// Progress bars
