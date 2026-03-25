@@ -217,8 +217,7 @@ export class FleetProgressComponent implements Component {
 		const cost = agent.costUsd > 0 ? formatUsd(agent.costUsd) : '-'
 		const tokens = agent.totalTokens > 0 ? formatTokens(agent.totalTokens) : '-'
 		const elapsed = formatAgentElapsed(agent.startedAt, agent.completedAt)
-		const elapsedStr = elapsed !== '-' ? ` ${elapsed}` : ''
-		const statsBlock = th.fg(c.stats, `${cost.padStart(7)} ${tokens.padStart(6)}${elapsedStr}`)
+		const statsBlock = th.fg(c.stats, `${cost.padStart(7)} ${tokens.padStart(6)} ${elapsed.padStart(7)}`)
 
 		return `  ${treeBranch} ${coloredIcon} ${coloredName} ${statsBlock}`
 	}
