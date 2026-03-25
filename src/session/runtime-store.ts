@@ -25,6 +25,8 @@ export function setFleetState(state: FleetState): void {
 export function clearFleetState(): void {
 	_state = null
 	_errors.clear()
+	_logDir = null
+	_logPaths.clear()
 }
 
 export function getFleetErrors(): Map<string, string> {
@@ -53,4 +55,14 @@ export function getLogDir(): string | null {
 
 export function setLogDir(logDir: string | null): void {
 	_logDir = logDir
+}
+
+let _logPaths: Map<string, string> = new Map()
+
+export function getLogPaths(): Map<string, string> {
+	return _logPaths
+}
+
+export function setLogPaths(paths: Map<string, string>): void {
+	_logPaths = paths
 }
