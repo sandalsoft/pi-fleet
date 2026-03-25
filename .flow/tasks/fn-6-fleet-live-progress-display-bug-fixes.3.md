@@ -74,8 +74,8 @@ README.md: Expand resource tracking section.
 - [ ] `npm run build` succeeds
 
 ## Done summary
-
-
-
+- Task completed
 ## Evidence
-
+- Commits:
+- Tests:
+- PRs:
