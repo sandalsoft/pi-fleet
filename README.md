@@ -40,6 +40,10 @@ If no `.pi/teams.yaml` exists, the interactive setup wizard walks you through pi
 | `/fleet --allow-dirty` | Skip the dirty working tree confirmation prompt. |
 | `/fleet-status` | Display current session status (agents, progress, costs) via a text widget. |
 | `/fleet-steer <agent> <message>` | Send a steering message to a running agent. Use `all` to broadcast. |
+| `/fleet-log` | Show scrollable in-memory activity log overlay for the current session. |
+| `/fleet-logs [agent] [--raw]` | Browse persistent agent log files from disk. No args lists sessions; with agent name shows meta/activity/stderr. |
+| `/fleet-errors` | Show error details and log file paths for failed agents. |
+| `/fleet-config` | Configure fleet settings (team, agents, constraints, chain). |
 
 ## Configuration
 
