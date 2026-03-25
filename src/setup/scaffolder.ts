@@ -1,4 +1,5 @@
 import fs from 'node:fs/promises'
+import fsSync from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -6,10 +7,13 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
 /** Resolve the templates directory (works from both src/ and dist/) */
 function templatesDir(): string {
-	// From src/setup/scaffolder.ts -> ../../templates
-	// From dist/setup/scaffolder.js -> ../../templates (esbuild bundles to dist/)
-	const candidate = path.resolve(__dirname, '..', '..', 'templates')
-	return candidate
+	// When bundled by esbuild into dist/extension.js, __dirname = dist/.
+	// Templates are copied to dist/templates/ at build time.
+	const bundled = path.resolve(__dirname, 'templates')
+	if (fsSync.existsSync(bundled)) return bundled
+
+	// When running from source (vitest), __dirname = src/setup/.
+	return path.resolve(__dirname, '..', '..', 'templates')
 }
 
 export const AVAILABLE_AGENTS = [

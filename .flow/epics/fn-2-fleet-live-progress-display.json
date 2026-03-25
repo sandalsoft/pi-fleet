@@ -1,0 +1,18 @@
+{
+  "branch_name": "fn-2-fleet-live-progress-display",
+  "completion_review_status": null,
+  "completion_reviewed_at": null,
+  "created_at": "2026-03-24T14:30:00.000000Z",
+  "default_impl": null,
+  "default_review": null,
+  "default_sync": null,
+  "depends_on_epics": ["fn-1-pi-fleet-multi-agent-terminal"],
+  "id": "fn-2-fleet-live-progress-display",
+  "next_task": 5,
+  "plan_review_status": null,
+  "plan_reviewed_at": null,
+  "spec_path": ".flow/specs/fn-2-fleet-live-progress-display.md",
+  "status": "open",
+  "title": "Fleet Live Progress Display",
+  "updated_at": "2026-03-24T14:30:00.000000Z"
+}

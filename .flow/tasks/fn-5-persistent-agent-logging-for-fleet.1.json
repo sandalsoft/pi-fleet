@@ -1,0 +1,14 @@
+{
+  "assignee": null,
+  "claim_note": "",
+  "claimed_at": null,
+  "created_at": "2026-03-25T13:48:24.049029Z",
+  "depends_on": [],
+  "epic": "fn-5-persistent-agent-logging-for-fleet",
+  "id": "fn-5-persistent-agent-logging-for-fleet.1",
+  "priority": null,
+  "spec_path": ".flow/tasks/fn-5-persistent-agent-logging-for-fleet.1.md",
+  "status": "todo",
+  "title": "AgentLogger module with write streams, meta.json, and log rotation",
+  "updated_at": "2026-03-25T14:49:23.334090Z"
+}

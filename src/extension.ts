@@ -4,8 +4,10 @@ import type { ExtensionAPI, ExtensionCommandContext } from '@mariozechner/pi-cod
 import { preflightBootstrap, preflightRunChecks } from './preflight.js'
 import { runSetupWizard } from './setup/wizard.js'
 import { handleSteer } from './steer/handler.js'
-import { handleStatus, updateStatusLine } from './status/display.js'
-import { getFleetState, setFleetState } from './session/runtime-store.js'
+import { runConfigEditor } from './config/editor.js'
+import { FleetLogOverlay } from './status/log-overlay.js'
+import { handleStatus, updateProgressWidget, clearProgressWidget } from './status/display.js'
+import { getFleetState, setFleetState, setFleetErrors, getFleetErrors, setActivityStore, getActivityStore } from './session/runtime-store.js'
 import {
 	createEventLogWriter,
 	createEventLogReader,
@@ -76,6 +78,14 @@ export default function piFleet(pi: ExtensionAPI): void {
 					ctx.ui.notify('Setup did not create teams.yaml. Aborting.', 'warning')
 					return
 				}
+
+				// Auto-commit scaffolded config so the worktree is clean and
+				// agents in worktrees (created from HEAD) have access to their config.
+				await pi.exec('git', ['-C', repoRoot, 'add', '.pi/'])
+				const statusAfterAdd = await pi.exec('git', ['-C', repoRoot, 'diff', '--cached', '--quiet'])
+				if (statusAfterAdd.code !== 0) {
+					await pi.exec('git', ['-C', repoRoot, 'commit', '-m', 'chore: scaffold pi-fleet config'])
+				}
 			}
 
 			// Dirty tree gating
@@ -138,12 +148,8 @@ export default function piFleet(pi: ExtensionAPI): void {
 			const timer = createSessionTimer()
 			const tracker = createResourceTracker({
 				eventLog,
-				onCostUpdate: (_totalUsd, _agentName) => {
-					const currentState = getFleetState()
-					if (currentState) {
-						updateStatusLine({ ui: ctx.ui }, currentState)
-					}
-				},
+				// Widget updates are handled by the dispatcher's commitState/refreshWidget.
+				// Updating here without the activities map would erase live activity lines.
 			})
 			const limitsMonitor = createLimitsMonitor({
 				maxUsd: team.constraints.maxUsd,
@@ -245,6 +251,12 @@ export default function piFleet(pi: ExtensionAPI): void {
 				eventLog,
 			})
 
+			// Populate members in state so the widget shows queued agents.
+			// selectTeam emitted team_selected to the event log but the
+			// in-memory state was not reduced — set it directly.
+			state.members = selection.selectedAgents
+			setFleetState(state)
+
 			ctx.ui.notify(
 				`Team selected: ${selection.selectedAgents.join(', ')}. ` +
 				`${selection.waves.length} wave(s), ${selection.assignments.length} task(s).`,
@@ -304,10 +316,14 @@ export default function piFleet(pi: ExtensionAPI): void {
 					tracker.recordUsage(agentName, modelId, usage)
 					limitsMonitor.check()
 				},
+				analysisModel: ctx.model,
 			})
 
 			state = dispatchResult.state
 			setFleetState(state)
+			setFleetErrors(dispatchResult.errors)
+			setActivityStore(dispatchResult.activityStore)
+			updateProgressWidget({ ui: ctx.ui }, state, undefined, undefined, dispatchResult.errors)
 
 			// Merge specialist branches back
 			const specialistBranches: SpecialistBranch[] = dispatchResult.completedBranches.map(
@@ -363,6 +379,7 @@ export default function piFleet(pi: ExtensionAPI): void {
 			await eventLog.append(consolidationEvent)
 			state = reduceEvent(state, consolidationEvent)
 			setFleetState(state)
+			updateProgressWidget({ ui: ctx.ui }, state)
 
 			// Session complete
 			const totalDurationMs = timer.elapsedMs()
@@ -374,6 +391,7 @@ export default function piFleet(pi: ExtensionAPI): void {
 			await eventLog.append(completeEvent)
 			state = reduceEvent(state, completeEvent)
 			setFleetState(state)
+			updateProgressWidget({ ui: ctx.ui }, state)
 
 			// Clean up worktrees and signal handlers
 			removeSignalHandlers()
@@ -392,7 +410,7 @@ export default function piFleet(pi: ExtensionAPI): void {
 				`Cost: $${tracker.totalCostUsd().toFixed(4)}. Time: ${(totalDurationMs / 1000).toFixed(0)}s.`,
 				failedCount > 0 ? 'warning' : 'info'
 			)
-			updateStatusLine({ ui: ctx.ui }, state)
+			clearProgressWidget({ ui: ctx.ui })
 		},
 	})
 
@@ -429,6 +447,65 @@ export default function piFleet(pi: ExtensionAPI): void {
 					? async (opts) => { runtime.sendMessage!(opts) }
 					: undefined,
 			})
+		},
+	})
+
+	pi.registerCommand('fleet-log', {
+		description: 'Show scrollable fleet activity log',
+		handler: async (_args: string, ctx: ExtensionCommandContext) => {
+			const store = getActivityStore()
+			if (!store || store.getFullHistory().length === 0) {
+				ctx.ui.notify('No fleet activity recorded. Start a fleet session first.', 'info')
+				return
+			}
+
+			const state = getFleetState()
+			const sessionStart = state?.startedAt ? new Date(state.startedAt).getTime() : Date.now()
+
+			if (!ctx.hasUI) {
+				// Headless fallback
+				const entries = store.getFullHistory().slice(-20)
+				const lines = entries.map((e) => {
+					const elapsed = Math.floor((e.timestamp - sessionStart) / 1000)
+					return `[${Math.floor(elapsed / 60)}:${String(elapsed % 60).padStart(2, '0')}] ${e.agentName}: ${e.text}`
+				})
+				ctx.ui.notify(lines.join('\n'), 'info')
+				return
+			}
+
+			await ctx.ui.custom<void>((_tui, theme, _kb, done) => {
+				return new FleetLogOverlay(theme, store.getFullHistory(), sessionStart, () => done())
+			}, {
+				overlay: true,
+				overlayOptions: { maxHeight: '70%', width: '90%', anchor: 'center' },
+			})
+		},
+	})
+
+	pi.registerCommand('fleet-errors', {
+		description: 'Show error details for failed agents',
+		handler: async (_args: string, ctx: ExtensionCommandContext) => {
+			const errors = getFleetErrors()
+			if (errors.size === 0) {
+				ctx.ui.notify('No agent errors recorded.', 'info')
+				return
+			}
+
+			const lines: string[] = []
+			for (const [agent, error] of errors) {
+				lines.push(`--- ${agent} ---`)
+				lines.push(error)
+				lines.push('')
+			}
+			ctx.ui.setWidget('fleet-errors', lines, { placement: 'aboveEditor' })
+		},
+	})
+
+	pi.registerCommand('fleet-config', {
+		description: 'Configure fleet settings (team, agents, constraints, chain)',
+		handler: async (_args: string, ctx: ExtensionCommandContext) => {
+			const { repoRoot } = await preflightBootstrap({ pi })
+			await runConfigEditor({ ctx, repoRoot })
 		},
 	})
 }

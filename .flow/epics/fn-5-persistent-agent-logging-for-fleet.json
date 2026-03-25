@@ -1,0 +1,18 @@
+{
+  "branch_name": "fn-5-persistent-agent-logging-for-fleet",
+  "completion_review_status": "unknown",
+  "completion_reviewed_at": null,
+  "created_at": "2026-03-25T13:47:21.165041Z",
+  "default_impl": null,
+  "default_review": null,
+  "default_sync": null,
+  "depends_on_epics": [],
+  "id": "fn-5-persistent-agent-logging-for-fleet",
+  "next_task": 1,
+  "plan_review_status": "ship",
+  "plan_reviewed_at": "2026-03-25T14:49:15.384203Z",
+  "spec_path": ".flow/specs/fn-5-persistent-agent-logging-for-fleet.md",
+  "status": "open",
+  "title": "Persistent agent logging for fleet sessions",
+  "updated_at": "2026-03-25T14:49:15.384389Z"
+}
