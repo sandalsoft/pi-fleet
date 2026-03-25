@@ -44,3 +44,13 @@ export function getActivityStore(): ActivityStore | null {
 export function setActivityStore(store: ActivityStore): void {
 	_activityStore = store
 }
+
+let _logDir: string | null = null
+
+export function getLogDir(): string | null {
+	return _logDir
+}
+
+export function setLogDir(logDir: string | null): void {
+	_logDir = logDir
+}
