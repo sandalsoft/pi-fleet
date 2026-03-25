@@ -69,8 +69,8 @@ Assertion: after dispatch returns, `state.costs.get(agentName)` fields match `ca
 - [ ] `npm run typecheck` passes
 
 ## Done summary
-
-
-
+Fixed double cost counting in the dispatcher streaming pipeline by adding resetAgentCost() to zero streaming-accumulated costs before applying the authoritative final cost from parseJsonlStream, all in a single commitState() call. Added comprehensive dispatcher tests with partial spawner mock and resetAgentCost unit tests.
 ## Evidence
-
+- Commits: 41b575337f62e91c71ab319ef07ad7a0ec54723d
+- Tests: npm test, npm run typecheck
+- PRs:

@@ -21,6 +21,8 @@ export interface SpecialistRecord {
 	worktreePath: string
 	model: string
 	status: 'running' | 'completed' | 'failed'
+	startedAt: string | null
+	completedAt: string | null
 	hostRoutableId?: string
 }
 
@@ -140,6 +142,8 @@ export function reduceEvent(state: FleetState, event: FleetEvent): FleetState {
 				worktreePath: known.worktreePath,
 				model: known.model,
 				status: 'running',
+				startedAt: known.timestamp,
+				completedAt: null,
 			})
 			return { ...state, specialists }
 		}
@@ -152,6 +156,7 @@ export function reduceEvent(state: FleetState, event: FleetEvent): FleetState {
 					...existing,
 					runId: known.runId,
 					status: 'completed',
+					completedAt: known.timestamp,
 				})
 			}
 			const completedAgents = [
@@ -175,6 +180,7 @@ export function reduceEvent(state: FleetState, event: FleetEvent): FleetState {
 					...existing,
 					runId: known.runId,
 					status: 'failed',
+					completedAt: known.timestamp,
 				})
 			}
 			const failedAgents = [

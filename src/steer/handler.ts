@@ -90,6 +90,8 @@ export function resolveTargets(
 					worktreePath: '',
 					model: 'dispatcher',
 					status: 'running',
+					startedAt: null,
+					completedAt: null,
 				},
 			],
 			error: null,

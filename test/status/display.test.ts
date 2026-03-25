@@ -122,6 +122,8 @@ describe('handleStatus', () => {
 			worktreePath: '/wt/dev',
 			model: 'claude-sonnet-4-20250514',
 			status: 'running',
+			startedAt: null,
+			completedAt: null,
 		})
 		setFleetState(state)
 
@@ -194,6 +196,8 @@ describe('updateStatusLine', () => {
 			worktreePath: '/wt/dev',
 			model: 'claude-sonnet-4-20250514',
 			status: 'completed',
+			startedAt: null,
+			completedAt: null,
 		})
 		state.totalCostUsd = 1.23
 		state.constraints = {
@@ -230,6 +234,8 @@ describe('updateProgressWidget', () => {
 			worktreePath: '/wt/dev',
 			model: 'claude-sonnet-4-20250514',
 			status: 'running',
+			startedAt: null,
+			completedAt: null,
 		})
 		state.totalCostUsd = 0.50
 
