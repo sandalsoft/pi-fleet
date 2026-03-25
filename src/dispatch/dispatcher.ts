@@ -13,6 +13,7 @@ import type {
 	SpecialistStartedEvent,
 	SpecialistCompletedEvent,
 	SpecialistFailedEvent,
+	CostUpdateEvent,
 } from '../session/events.js'
 import { setFleetState } from '../session/runtime-store.js'
 import { reduceEvent } from '../session/state.js'
@@ -22,9 +23,13 @@ import type {
 	SmokeResults,
 } from './types.js'
 import { buildTaskGraph, computeWaves } from './task-graph.js'
-import { spawnSpecialist, readSmokeResults } from './spawner.js'
+import { spawnSpecialist, readSmokeResults, extractActivity, extractStreamingUsage } from './spawner.js'
+import { calculateCost } from '../resources/pricing.js'
+import { analyzeFailure } from './failure-analyzer.js'
+import { ActivityStore } from '../status/activity-store.js'
 import { composePrompt } from './prompt-composer.js'
 import { consolidateReports, type SpecialistReport } from './consolidator.js'
+import { updateProgressWidget } from '../status/display.js'
 
 export interface DispatcherOpts {
 	pi: ExtensionAPI
@@ -43,6 +48,8 @@ export interface DispatcherOpts {
 	releaseWorktree?: (worktreePath: string) => void
 	/** Called with usage data after each specialist completes */
 	onUsage?: (agentName: string, model: string, usage: import('./types.js').Usage) => void
+	/** LLM model for failure analysis. If provided, failed agents get an LLM-generated diagnosis. */
+	analysisModel?: import('@mariozechner/pi-ai').Model<any>
 }
 
 export interface DispatchResult {
@@ -51,6 +58,10 @@ export interface DispatchResult {
 	failedAgents: string[]
 	/** Branches from completed specialists that can be merged */
 	completedBranches: Array<{ agentName: string; branch: string }>
+	/** Error messages keyed by agent name (for failed agents). */
+	errors: Map<string, string>
+	/** Activity history store for /fleet-log. */
+	activityStore: ActivityStore
 }
 
 /**
@@ -77,8 +88,34 @@ export async function dispatch(opts: DispatcherOpts): Promise<DispatchResult> {
 		acquireWorktree,
 		releaseWorktree,
 		onUsage,
+		analysisModel,
 	} = opts
 	let { state } = opts
+
+	/** Per-agent activity history with dedup. */
+	const activityStore = new ActivityStore()
+	/** Per-agent error messages for failed agents. */
+	const errors = new Map<string, string>()
+
+	/** Throttle: minimum ms between widget renders. */
+	const THROTTLE_MS = 200
+	let lastRenderTime = 0
+
+	/** Update state and refresh the progress widget (always renders). */
+	function commitState(s: FleetState): void {
+		state = s
+		setFleetState(state)
+		lastRenderTime = Date.now()
+		updateProgressWidget(ctx, state, activityStore, undefined, errors)
+	}
+
+	/** Refresh the widget without a state change. Throttled to ~5 renders/sec. */
+	function refreshWidget(): void {
+		const now = Date.now()
+		if (now - lastRenderTime < THROTTLE_MS) return
+		lastRenderTime = now
+		updateProgressWidget(ctx, state, activityStore, undefined, errors)
+	}
 
 	// 1. Record base commit SHA
 	const headResult = await pi.exec('git', ['-C', repoRoot, 'rev-parse', 'HEAD'])
@@ -93,8 +130,7 @@ export async function dispatch(opts: DispatcherOpts): Promise<DispatchResult> {
 		constraints: team.constraints,
 	})
 	await eventLog.append(sessionStartEvent)
-	state = reduceEvent(state, sessionStartEvent)
-	setFleetState(state)
+	commitState(reduceEvent(state, sessionStartEvent))
 
 	// 2. Build task graph and compute waves
 	const graph = buildTaskGraph(assignments, dependencies)
@@ -106,8 +142,7 @@ export async function dispatch(opts: DispatcherOpts): Promise<DispatchResult> {
 		waveCount: waves.length,
 	})
 	await eventLog.append(taskGraphEvent)
-	state = reduceEvent(state, taskGraphEvent)
-	setFleetState(state)
+	commitState(reduceEvent(state, taskGraphEvent))
 
 	ctx.ui.setWorkingMessage(
 		`Executing ${waves.length} wave(s) with ${assignments.length} task(s)...`
@@ -129,7 +164,11 @@ export async function dispatch(opts: DispatcherOpts): Promise<DispatchResult> {
 	const runtimes = new Map<string, SpecialistRuntime>()
 	const limit = pLimit(team.constraints.maxConcurrency)
 
+	// Periodic refresh keeps elapsed time and progress bars current
+	const refreshInterval = setInterval(() => refreshWidget(), 1000)
+
 	// 3. Execute waves
+	try {
 	for (let waveIdx = 0; waveIdx < waves.length; waveIdx++) {
 		const wave = waves[waveIdx]
 		ctx.ui.setWorkingMessage(
@@ -171,8 +210,7 @@ export async function dispatch(opts: DispatcherOpts): Promise<DispatchResult> {
 					model,
 				})
 				await eventLog.append(startedEvent)
-				state = reduceEvent(state, startedEvent)
-				setFleetState(state)
+				commitState(reduceEvent(state, startedEvent))
 
 				const result = await spawnSpecialist({
 					agentName: assignment.agentName,
@@ -182,6 +220,28 @@ export async function dispatch(opts: DispatcherOpts): Promise<DispatchResult> {
 					timeoutMs: team.constraints.taskTimeoutMs,
 					repoRoot,
 					cancelSignal,
+					onStreamLine: (line) => {
+						const activity = extractActivity(line)
+						if (activity) {
+							const added = activityStore.appendActivity(assignment.agentName, activity)
+							if (added) refreshWidget()
+						}
+						// Extract streaming usage for real-time cost updates
+						const streamUsage = extractStreamingUsage(line)
+						if (streamUsage && (streamUsage.inputTokens > 0 || streamUsage.outputTokens > 0)) {
+							const { costUsd } = calculateCost(streamUsage, model)
+							const costEvent = createFleetEvent<CostUpdateEvent>({
+								type: 'cost_update',
+								agentName: assignment.agentName,
+								inputTokens: streamUsage.inputTokens,
+								outputTokens: streamUsage.outputTokens,
+								costUsd,
+							})
+							state = reduceEvent(state, costEvent)
+							setFleetState(state)
+							refreshWidget()
+						}
+					},
 				})
 
 				runtimes.set(assignment.agentName, result.runtime)
@@ -194,21 +254,57 @@ export async function dispatch(opts: DispatcherOpts): Promise<DispatchResult> {
 						runId: result.runtime.runId,
 					})
 					await eventLog.append(completedEvent)
-					state = reduceEvent(state, completedEvent)
+					commitState(reduceEvent(state, completedEvent))
 				} else {
+					// Analyze the failure — use LLM if available, else raw extraction
+					let diagnosis: string
+					if (analysisModel) {
+						activityStore.appendActivity(assignment.agentName, 'analyzing failure...')
+						commitState(state)
+						diagnosis = await analyzeFailure({
+							agentName: assignment.agentName,
+							taskBrief: assignment.brief,
+							stdout: result.report,
+							stderr: result.stderr,
+							errorDetails: result.errorDetails,
+							report: result.report,
+							model: analysisModel,
+						})
+					} else {
+						// Fallback: raw error details
+						diagnosis = result.errorDetails.length > 0
+							? result.errorDetails.join('\n').slice(0, 500)
+							: result.stderr.trim()
+								? result.stderr.trim().split('\n').slice(-5).join('\n')
+								: result.report || 'Process exited with non-zero code'
+					}
+					errors.set(assignment.agentName, diagnosis)
+					activityStore.appendActivity(assignment.agentName, diagnosis.split('\n')[0] ?? 'failed')
+
 					const failedEvent = createFleetEvent<SpecialistFailedEvent>({
 						type: 'specialist_failed',
 						agentName: assignment.agentName,
 						runId: result.runtime.runId,
-						error: `Process exited with non-zero code`,
+						error: diagnosis.split('\n')[0]?.slice(0, 200) ?? 'Unknown error',
 					})
 					await eventLog.append(failedEvent)
-					state = reduceEvent(state, failedEvent)
+					commitState(reduceEvent(state, failedEvent))
 				}
-				setFleetState(state)
 
-				// Report usage for cost tracking
+				// Report usage for cost tracking.
+				// recordUsage writes a cost_update event to the log; we also need
+				// to reduce it into in-memory state (the tracker doesn't do that).
 				onUsage?.(assignment.agentName, model, result.usage)
+				// Reduce cost into live state (tracker writes to log; we update in-memory)
+				const { costUsd } = calculateCost(result.usage, model)
+				const costEvent = createFleetEvent<CostUpdateEvent>({
+					type: 'cost_update',
+					agentName: assignment.agentName,
+					inputTokens: result.usage.inputTokens,
+					outputTokens: result.usage.outputTokens,
+					costUsd,
+				})
+				commitState(reduceEvent(state, costEvent))
 
 				// Release worktree back to pool
 				if (releaseWorktree && worktreePath !== repoRoot) {
@@ -237,6 +333,10 @@ export async function dispatch(opts: DispatcherOpts): Promise<DispatchResult> {
 		}
 	}
 
+	} finally {
+		clearInterval(refreshInterval)
+	}
+
 	// 4. Consolidate
 	const consolidation = consolidateReports(allReports)
 
@@ -252,6 +352,8 @@ export async function dispatch(opts: DispatcherOpts): Promise<DispatchResult> {
 		summary: consolidation.summary,
 		failedAgents: consolidation.failedAgents,
 		completedBranches,
+		errors,
+		activityStore,
 	}
 }
 

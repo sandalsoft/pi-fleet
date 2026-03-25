@@ -33,9 +33,13 @@ export interface InterviewQuestion {
 }
 
 // --- Question bank ---
+// After the task_description is collected, an LLM call auto-infers:
+//   task_type, affected_areas, scope_size, needs_devops, needs_architect, parallel_safe
+// Hard-coded always-yes: needs_qa, needs_review, has_tests
+// Only task_description and priority remain as interactive questions.
 
 export const questionBank: InterviewQuestion[] = [
-	// Task understanding
+	// Task understanding — the only free-form input
 	{
 		id: 'task_description',
 		category: 'task',
@@ -43,103 +47,8 @@ export const questionBank: InterviewQuestion[] = [
 		prompt: 'Describe the task you want the fleet to work on:',
 		condition: () => true,
 	},
-	{
-		id: 'task_type',
-		category: 'task',
-		kind: 'select',
-		prompt: 'What kind of work is this?',
-		options: () => [
-			{ label: 'New feature', value: 'feature' },
-			{ label: 'Bug fix', value: 'bugfix' },
-			{ label: 'Refactor', value: 'refactor' },
-			{ label: 'Documentation', value: 'docs' },
-			{ label: 'Testing', value: 'testing' },
-			{ label: 'DevOps / Infrastructure', value: 'devops' },
-			{ label: 'Research / Exploration', value: 'research' },
-		],
-		condition: () => true,
-	},
-	{
-		id: 'task_details',
-		category: 'task',
-		kind: 'input',
-		prompt: 'Any specific requirements, constraints, or acceptance criteria?',
-		condition: () => true,
-	},
 
-	// Scope
-	{
-		id: 'affected_areas',
-		category: 'scope',
-		kind: 'input',
-		prompt: 'Which areas of the codebase will be affected? (e.g., src/api, frontend, database)',
-		condition: () => true,
-	},
-	{
-		id: 'scope_size',
-		category: 'scope',
-		kind: 'select',
-		prompt: 'How large is this change?',
-		options: () => [
-			{ label: 'Small (single file or function)', value: 'small' },
-			{ label: 'Medium (a few files, one module)', value: 'medium' },
-			{ label: 'Large (cross-cutting, multiple modules)', value: 'large' },
-		],
-		condition: () => true,
-	},
-	{
-		id: 'has_tests',
-		category: 'scope',
-		kind: 'confirm',
-		prompt: 'Should the agents write tests for this work?',
-		condition: () => true,
-	},
-
-	// Agent selection context
-	{
-		id: 'needs_architect',
-		category: 'agents',
-		kind: 'confirm',
-		prompt: 'Does this task need upfront architecture planning before coding?',
-		condition: (ctx) => {
-			const scope = ctx.answers['scope_size']
-			const hasArchitect = ctx.agents.some((a) => a.id === 'architect')
-			return hasArchitect && (scope === 'medium' || scope === 'large')
-		},
-	},
-	{
-		id: 'needs_review',
-		category: 'agents',
-		kind: 'confirm',
-		prompt: 'Should a reviewer agent check the work before merging?',
-		condition: (ctx) => {
-			return ctx.agents.some((a) => a.id === 'reviewer')
-		},
-	},
-	{
-		id: 'needs_devops',
-		category: 'agents',
-		kind: 'confirm',
-		prompt: 'Does this involve infrastructure, CI/CD, or deployment changes?',
-		condition: (ctx) => {
-			const taskType = ctx.answers['task_type']
-			const hasDevops = ctx.agents.some((a) => a.id === 'devops')
-			return hasDevops && taskType !== 'devops'
-		},
-	},
-	{
-		id: 'needs_qa',
-		category: 'agents',
-		kind: 'confirm',
-		prompt: 'Should a dedicated QA agent validate the implementation?',
-		condition: (ctx) => {
-			const hasQa = ctx.agents.some((a) => a.id === 'qa')
-			const wantsTests = ctx.answers['has_tests'] === true
-			return hasQa && wantsTests
-		},
-	},
-
-	// Constraints
+	// Priority — the only remaining choice
 	{
 		id: 'priority_speed_or_quality',
 		category: 'priorities',
@@ -151,16 +60,6 @@ export const questionBank: InterviewQuestion[] = [
 			{ label: 'Balanced', value: 'balanced' },
 		],
 		condition: () => true,
-	},
-	{
-		id: 'parallel_safe',
-		category: 'constraints',
-		kind: 'confirm',
-		prompt: 'Can different parts of this task be worked on in parallel by different agents?',
-		condition: (ctx) => {
-			const scope = ctx.answers['scope_size']
-			return scope === 'medium' || scope === 'large'
-		},
 	},
 ]
 

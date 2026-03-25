@@ -1,5 +1,11 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { formatStatusTable, formatStatusLine } from '../../src/status/formatter.js'
+import {
+	formatStatusTable,
+	formatStatusLine,
+	formatTokens,
+	formatUsd,
+	progressBar,
+} from '../../src/status/formatter.js'
 import { emptyFleetState, type FleetState } from '../../src/session/state.js'
 
 function populatedState(): FleetState {
@@ -48,6 +54,50 @@ function populatedState(): FleetState {
 	return state
 }
 
+describe('formatTokens', () => {
+	it('returns dash for zero', () => {
+		expect(formatTokens(0)).toBe('-')
+	})
+
+	it('formats small counts as-is', () => {
+		expect(formatTokens(500)).toBe('500')
+	})
+
+	it('formats thousands with one decimal', () => {
+		expect(formatTokens(7000)).toBe('7.0k')
+	})
+
+	it('formats large thousands without decimal', () => {
+		expect(formatTokens(150_000)).toBe('150k')
+	})
+
+	it('formats millions', () => {
+		expect(formatTokens(1_500_000)).toBe('1.5M')
+	})
+})
+
+describe('progressBar', () => {
+	it('returns all empty at 0%', () => {
+		const bar = progressBar(0, 10)
+		expect(bar).toBe('\u2591'.repeat(10))
+	})
+
+	it('returns all filled at 100%', () => {
+		const bar = progressBar(1, 10)
+		expect(bar).toBe('\u2593'.repeat(10))
+	})
+
+	it('returns half filled at 50%', () => {
+		const bar = progressBar(0.5, 10)
+		expect(bar).toBe('\u2593'.repeat(5) + '\u2591'.repeat(5))
+	})
+
+	it('clamps to bounds', () => {
+		expect(progressBar(-0.5, 10)).toBe('\u2591'.repeat(10))
+		expect(progressBar(1.5, 10)).toBe('\u2593'.repeat(10))
+	})
+})
+
 describe('formatStatusTable', () => {
 	it('returns an array of strings', () => {
 		const lines = formatStatusTable(populatedState())
@@ -55,46 +105,39 @@ describe('formatStatusTable', () => {
 		expect(lines.length).toBeGreaterThan(0)
 	})
 
-	it('contains box-drawing borders', () => {
+	it('shows phase in header', () => {
 		const lines = formatStatusTable(populatedState())
 		const joined = lines.join('\n')
-
-		// Top-left corner
-		expect(joined).toContain('\u250c')
-		// Bottom-right corner
-		expect(joined).toContain('\u2518')
-		// Vertical separator
-		expect(joined).toContain('\u2502')
+		expect(joined).toContain('Executing')
 	})
 
-	it('shows header row with all columns', () => {
+	it('shows total cost and tokens in header', () => {
 		const lines = formatStatusTable(populatedState())
-		const headerLine = lines[1]
-
-		expect(headerLine).toContain('Agent')
-		expect(headerLine).toContain('Model')
-		expect(headerLine).toContain('Status')
-		expect(headerLine).toContain('Cost')
-		expect(headerLine).toContain('Elapsed')
+		const joined = lines.join('\n')
+		expect(joined).toContain('$2.14')
+		// 5000+2000+3000+1000 = 11000 = "11.0k"
+		expect(joined).toContain('11.0k tok')
 	})
 
-	it('shows running and completed agents', () => {
+	it('shows running and completed agents with status icons', () => {
 		const lines = formatStatusTable(populatedState())
 		const joined = lines.join('\n')
 
 		expect(joined).toContain('developer')
 		expect(joined).toContain('reviewer')
-		expect(joined).toContain('completed')
-		expect(joined).toContain('running')
+		// Check mark for completed
+		expect(joined).toContain('\u2713')
+		// Filled circle for running
+		expect(joined).toContain('\u25cf')
 	})
 
-	it('shows queued agents that have not started', () => {
+	it('shows queued agents with open circle icon', () => {
 		const lines = formatStatusTable(populatedState())
 		const joined = lines.join('\n')
 
-		// architect is in members but not started
 		expect(joined).toContain('architect')
-		expect(joined).toContain('queued')
+		// Open circle for queued
+		expect(joined).toContain('\u25cb')
 	})
 
 	it('shows cost per agent', () => {
@@ -105,27 +148,101 @@ describe('formatStatusTable', () => {
 		expect(joined).toContain('$0.64')
 	})
 
-	it('shows totals row', () => {
+	it('shows token counts per agent', () => {
 		const lines = formatStatusTable(populatedState())
 		const joined = lines.join('\n')
 
-		expect(joined).toContain('Total')
-		expect(joined).toContain('$2.14')
+		// developer: 5000 + 2000 = 7000 tokens = "7.0k"
+		expect(joined).toContain('7.0k')
+		// reviewer: 3000 + 1000 = 4000 tokens = "4.0k"
+		expect(joined).toContain('4.0k')
 	})
 
-	it('shows budget remaining when constraints exist', () => {
+	it('shows progress bars when constraints exist', () => {
 		const lines = formatStatusTable(populatedState())
 		const joined = lines.join('\n')
 
-		expect(joined).toContain('Remaining')
-		expect(joined).toContain('$7.86')
+		expect(joined).toContain('TIME')
+		expect(joined).toContain('COST')
+		// Contains progress bar characters
+		expect(joined).toContain('\u2593')
+		expect(joined).toContain('\u2591')
+	})
+
+	it('shows budget limit in progress bar', () => {
+		const lines = formatStatusTable(populatedState())
+		const joined = lines.join('\n')
+
+		expect(joined).toContain('$10.00')
+		expect(joined).toContain('30m')
+	})
+
+	it('shows completion summary', () => {
+		const lines = formatStatusTable(populatedState())
+		const joined = lines.join('\n')
+
+		expect(joined).toContain('1/3 complete')
+	})
+
+	it('shows failed count in summary when agents have failed', () => {
+		const state = populatedState()
+		state.specialists.set('reviewer', {
+			...state.specialists.get('reviewer')!,
+			status: 'failed',
+		})
+
+		const lines = formatStatusTable(state)
+		const joined = lines.join('\n')
+
+		expect(joined).toContain('1 failed')
 	})
 
 	it('handles empty state gracefully', () => {
 		const lines = formatStatusTable(emptyFleetState())
 		expect(lines.length).toBeGreaterThan(0)
 		const joined = lines.join('\n')
-		expect(joined).toContain('Total (0/0)')
+		expect(joined).toContain('0/0 complete')
+	})
+
+	it('shows tree connectors for agent rows', () => {
+		const lines = formatStatusTable(populatedState())
+		const joined = lines.join('\n')
+
+		// Tree drawing characters
+		expect(joined).toContain('\u251c\u2500') // ├─
+		expect(joined).toContain('\u2514\u2500') // └─
+	})
+
+	it('shows activity inline for running agents', () => {
+		const state = populatedState()
+		const activities = new Map([
+			['reviewer', 'reading src/config/schema.ts'],
+		])
+
+		const lines = formatStatusTable(state, activities)
+		const joined = lines.join('\n')
+
+		// Activity appears on the reviewer's row
+		expect(joined).toContain('reading src/config/schema.ts')
+	})
+
+	it('shows waiting label for queued agents', () => {
+		const lines = formatStatusTable(populatedState())
+		const joined = lines.join('\n')
+
+		expect(joined).toContain('waiting')
+	})
+
+	it('does not show activity for completed agents', () => {
+		const state = populatedState()
+		const activities = new Map([
+			['developer', 'editing src/main.ts'],  // developer is completed
+		])
+
+		const lines = formatStatusTable(state, activities)
+		const joined = lines.join('\n')
+
+		expect(joined).not.toContain('developer: editing')
 	})
 })
 
@@ -134,7 +251,7 @@ describe('formatStatusLine', () => {
 		const line = formatStatusLine(populatedState())
 
 		expect(line).toContain('Fleet:')
-		expect(line).toContain('agents complete')
+		expect(line).toContain('complete')
 		expect(line).toContain('$2.14')
 		expect(line).toContain('$10.00')
 	})

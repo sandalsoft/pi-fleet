@@ -1,4 +1,5 @@
 import type { FleetState } from './state.js'
+import type { ActivityStore } from '../status/activity-store.js'
 
 /**
  * Module-level singleton store for in-memory FleetState.
@@ -11,6 +12,7 @@ import type { FleetState } from './state.js'
  * - /fleet-steer and /fleet-status read from it
  */
 let _state: FleetState | null = null
+let _errors: Map<string, string> = new Map()
 
 export function getFleetState(): FleetState | null {
 	return _state
@@ -22,4 +24,23 @@ export function setFleetState(state: FleetState): void {
 
 export function clearFleetState(): void {
 	_state = null
+	_errors.clear()
+}
+
+export function getFleetErrors(): Map<string, string> {
+	return _errors
+}
+
+export function setFleetErrors(errors: Map<string, string>): void {
+	_errors = errors
+}
+
+let _activityStore: ActivityStore | null = null
+
+export function getActivityStore(): ActivityStore | null {
+	return _activityStore
+}
+
+export function setActivityStore(store: ActivityStore): void {
+	_activityStore = store
 }

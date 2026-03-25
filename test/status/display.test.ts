@@ -3,6 +3,9 @@ import {
 	resolveFleetState,
 	handleStatus,
 	updateStatusLine,
+	updateProgressWidget,
+	clearProgressWidget,
+	_resetProgressComponent,
 	type StatusContext,
 } from '../../src/status/display.js'
 import {
@@ -99,7 +102,6 @@ describe('resolveFleetState', () => {
 		]
 
 		const result = await resolveFleetState(mockReader(events))
-		// Should get the in-memory state, not the replayed one
 		expect(result!.phase).toBe('merging')
 	})
 })
@@ -209,5 +211,51 @@ describe('updateStatusLine', () => {
 		expect(statusText).toContain('1/2')
 		expect(statusText).toContain('$1.23')
 		expect(statusText).toContain('$10.00')
+	})
+})
+
+describe('updateProgressWidget', () => {
+	afterEach(() => {
+		_resetProgressComponent()
+	})
+
+	it('falls back to string[] and renders above editor when TUI unavailable', () => {
+		const state = emptyFleetState()
+		state.phase = 'executing'
+		state.members = ['developer']
+		state.specialists.set('developer', {
+			agentName: 'developer',
+			runId: 'run-001',
+			pid: 1234,
+			worktreePath: '/wt/dev',
+			model: 'claude-sonnet-4-20250514',
+			status: 'running',
+		})
+		state.totalCostUsd = 0.50
+
+		const ctx = mockCtx()
+		updateProgressWidget(ctx, state)
+
+		// First call is the factory attempt, second is the string[] fallback
+		const calls = (ctx.ui.setWidget as ReturnType<typeof vi.fn>).mock.calls
+		// Fallback string[] call has placement above editor
+		const fallbackCall = calls.find((c: unknown[]) => Array.isArray(c[1]))
+		expect(fallbackCall).toBeDefined()
+		expect(fallbackCall![2]).toEqual({ placement: 'aboveEditor' })
+		const lines = fallbackCall![1] as string[]
+		expect(lines.join('\n')).toContain('developer')
+
+		// Status line also updated
+		expect(ctx.ui.setStatus).toHaveBeenCalledWith('fleet', expect.stringContaining('Fleet:'))
+	})
+})
+
+describe('clearProgressWidget', () => {
+	it('removes widget and status', () => {
+		const ctx = mockCtx()
+		clearProgressWidget(ctx)
+
+		expect(ctx.ui.setWidget).toHaveBeenCalledWith('fleet-progress', undefined)
+		expect(ctx.ui.setStatus).toHaveBeenCalledWith('fleet', undefined)
 	})
 })

@@ -9,6 +9,7 @@ import {
 	type InterviewQuestion,
 	getApplicableQuestions,
 } from './questions.js'
+import { analyzeTaskDescription } from './analyzer.js'
 
 /**
  * Result of the interview process.
@@ -55,9 +56,13 @@ interface RunInterviewOpts {
 
 /**
  * Run the interactive interview via pi UI methods.
- * Asks 8-12 adaptive questions, collecting answers into a keyed record.
- * If the user cancels any question (select/input returns undefined), the
- * interview is aborted and a session_aborted event is emitted.
+ *
+ * Flow:
+ * 1. Ask for the task description (free-form input)
+ * 2. LLM-analyze the description to infer task_type, affected_areas,
+ *    scope_size, and needs_devops — skipping those interactive questions
+ * 3. Hard-code needs_qa = true, needs_review = true
+ * 4. Ask remaining questions (has_tests, needs_architect, priority, parallel_safe)
  */
 export async function runInterview(opts: RunInterviewOpts): Promise<InterviewResult> {
 	const { ctx, agents, repoRoot, eventLog } = opts
@@ -73,8 +78,62 @@ export async function runInterview(opts: RunInterviewOpts): Promise<InterviewRes
 	// Track which questions have already been asked
 	const asked = new Set<string>()
 
-	// Re-evaluate applicable questions after each answer, asking new ones
-	// that become relevant as context accumulates.
+	// Step 1: Ask for the task description
+	const taskDescQuestion = getApplicableQuestions(interviewCtx).find((q) => q.id === 'task_description')
+	if (taskDescQuestion) {
+		asked.add('task_description')
+		const answer = await askQuestion(ctx, taskDescQuestion, interviewCtx)
+		if (answer === undefined) {
+			await emitAbort(eventLog)
+			return { cancelled: true, answers: interviewCtx.answers }
+		}
+		interviewCtx.answers['task_description'] = answer
+	}
+
+	// Step 2: LLM-analyze the task description to auto-infer answers
+	const taskDescription = String(interviewCtx.answers['task_description'] ?? '')
+	if (taskDescription && ctx.model) {
+		ctx.ui.setWorkingMessage('Analyzing task...')
+		try {
+			const analysis = await analyzeTaskDescription({
+				taskDescription,
+				model: ctx.model,
+				detectedExtensions,
+				agents,
+			})
+
+			interviewCtx.answers['task_type'] = analysis.task_type
+			interviewCtx.answers['affected_areas'] = analysis.affected_areas
+			interviewCtx.answers['scope_size'] = analysis.scope_size
+			interviewCtx.answers['needs_devops'] = analysis.needs_devops
+			interviewCtx.answers['needs_architect'] = analysis.needs_architect
+			interviewCtx.answers['parallel_safe'] = analysis.parallel_safe
+		} catch {
+			// Fallback: set reasonable defaults
+			interviewCtx.answers['task_type'] = 'feature'
+			interviewCtx.answers['affected_areas'] = 'src/**'
+			interviewCtx.answers['scope_size'] = 'medium'
+			interviewCtx.answers['needs_devops'] = false
+			interviewCtx.answers['needs_architect'] = false
+			interviewCtx.answers['parallel_safe'] = true
+		}
+		ctx.ui.setWorkingMessage('')
+	} else {
+		// No model or no description — set defaults
+		interviewCtx.answers['task_type'] = 'feature'
+		interviewCtx.answers['affected_areas'] = 'src/**'
+		interviewCtx.answers['scope_size'] = 'medium'
+		interviewCtx.answers['needs_devops'] = false
+		interviewCtx.answers['needs_architect'] = false
+		interviewCtx.answers['parallel_safe'] = true
+	}
+
+	// Step 3: Hard-code always-yes answers
+	interviewCtx.answers['needs_qa'] = true
+	interviewCtx.answers['needs_review'] = true
+	interviewCtx.answers['has_tests'] = true
+
+	// Step 4: Ask remaining interactive questions
 	while (true) {
 		const applicable = getApplicableQuestions(interviewCtx)
 		const next = applicable.find((q) => !asked.has(q.id))
@@ -85,12 +144,7 @@ export async function runInterview(opts: RunInterviewOpts): Promise<InterviewRes
 
 		// undefined from select/input means the user cancelled
 		if (answer === undefined && next.kind !== 'confirm') {
-			await eventLog.append(
-				createFleetEvent<import('../session/events.js').SessionAbortedEvent>({
-					type: 'session_aborted',
-					reason: 'User cancelled interview',
-				})
-			)
+			await emitAbort(eventLog)
 			return { cancelled: true, answers: interviewCtx.answers }
 		}
 
@@ -106,6 +160,15 @@ export async function runInterview(opts: RunInterviewOpts): Promise<InterviewRes
 	)
 
 	return { cancelled: false, answers: interviewCtx.answers }
+}
+
+async function emitAbort(eventLog: EventLogWriter): Promise<void> {
+	await eventLog.append(
+		createFleetEvent<import('../session/events.js').SessionAbortedEvent>({
+			type: 'session_aborted',
+			reason: 'User cancelled interview',
+		})
+	)
 }
 
 /**
