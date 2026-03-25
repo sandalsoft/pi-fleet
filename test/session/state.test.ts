@@ -3,6 +3,7 @@ import {
 	emptyFleetState,
 	reconstructState,
 	reduceEvent,
+	resetAgentCost,
 	type FleetState,
 } from '../../src/session/state.js'
 import {
@@ -246,6 +247,63 @@ describe('reconstructState from event sequences', () => {
 		expect(spec.worktreePath).toBe('/tmp/worktrees/architect')
 		expect(spec.model).toBe('claude-opus-4-20250514')
 		expect(spec.status).toBe('running')
+	})
+})
+
+describe('resetAgentCost', () => {
+	it('zeros all cost fields for a single agent', () => {
+		let state = emptyFleetState()
+		state = reduceEvent(state, ev({
+			type: 'cost_update', agentName: 'dev', inputTokens: 1000, outputTokens: 500, costUsd: 0.05,
+		}))
+		expect(state.costs.get('dev')!.inputTokens).toBe(1000)
+
+		const reset = resetAgentCost(state, 'dev')
+		const cost = reset.costs.get('dev')!
+		expect(cost.inputTokens).toBe(0)
+		expect(cost.outputTokens).toBe(0)
+		expect(cost.costUsd).toBe(0)
+	})
+
+	it('recalculates totalCostUsd after reset', () => {
+		let state = emptyFleetState()
+		state = reduceEvent(state, ev({
+			type: 'cost_update', agentName: 'dev', inputTokens: 1000, outputTokens: 500, costUsd: 0.05,
+		}))
+		state = reduceEvent(state, ev({
+			type: 'cost_update', agentName: 'reviewer', inputTokens: 500, outputTokens: 200, costUsd: 0.02,
+		}))
+		expect(state.totalCostUsd).toBeCloseTo(0.07)
+
+		const reset = resetAgentCost(state, 'dev')
+		// Only reviewer's cost remains
+		expect(reset.totalCostUsd).toBeCloseTo(0.02)
+	})
+
+	it('does not affect other agents', () => {
+		let state = emptyFleetState()
+		state = reduceEvent(state, ev({
+			type: 'cost_update', agentName: 'dev', inputTokens: 1000, outputTokens: 500, costUsd: 0.05,
+		}))
+		state = reduceEvent(state, ev({
+			type: 'cost_update', agentName: 'reviewer', inputTokens: 500, outputTokens: 200, costUsd: 0.02,
+		}))
+
+		const reset = resetAgentCost(state, 'dev')
+		const reviewer = reset.costs.get('reviewer')!
+		expect(reviewer.inputTokens).toBe(500)
+		expect(reviewer.outputTokens).toBe(200)
+		expect(reviewer.costUsd).toBeCloseTo(0.02)
+	})
+
+	it('handles resetting an agent with no prior cost', () => {
+		const state = emptyFleetState()
+		const reset = resetAgentCost(state, 'nonexistent')
+		const cost = reset.costs.get('nonexistent')!
+		expect(cost.inputTokens).toBe(0)
+		expect(cost.outputTokens).toBe(0)
+		expect(cost.costUsd).toBe(0)
+		expect(reset.totalCostUsd).toBe(0)
 	})
 })
 

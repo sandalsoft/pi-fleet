@@ -16,7 +16,7 @@ import type {
 	CostUpdateEvent,
 } from '../session/events.js'
 import { setFleetState } from '../session/runtime-store.js'
-import { reduceEvent } from '../session/state.js'
+import { reduceEvent, resetAgentCost } from '../session/state.js'
 import type {
 	TaskAssignment,
 	SpecialistRuntime,
@@ -284,7 +284,20 @@ export async function dispatch(opts: DispatcherOpts): Promise<DispatchResult> {
 					})
 				}
 
-				// Emit completion or failure
+				// Build the authoritative final cost event from the parsed result.
+				// This replaces streaming-accumulated costs to prevent double counting.
+				onUsage?.(assignment.agentName, model, result.usage)
+				const { costUsd } = calculateCost(result.usage, model)
+				const finalCostEvent = createFleetEvent<CostUpdateEvent>({
+					type: 'cost_update',
+					agentName: assignment.agentName,
+					inputTokens: result.usage.inputTokens,
+					outputTokens: result.usage.outputTokens,
+					costUsd,
+				})
+
+				// Emit completion or failure, then atomically reset streaming costs
+				// and apply the authoritative final cost in a single commitState().
 				if (result.runtime.status === 'completed') {
 					const completedEvent = createFleetEvent<SpecialistCompletedEvent>({
 						type: 'specialist_completed',
@@ -292,7 +305,10 @@ export async function dispatch(opts: DispatcherOpts): Promise<DispatchResult> {
 						runId: result.runtime.runId,
 					})
 					await eventLog.append(completedEvent)
-					commitState(reduceEvent(state, completedEvent))
+					let s = reduceEvent(state, completedEvent)
+					s = resetAgentCost(s, assignment.agentName)
+					s = reduceEvent(s, finalCostEvent)
+					commitState(s)
 				} else {
 					// Analyze the failure — use LLM if available, else raw extraction
 					let diagnosis: string
@@ -335,23 +351,11 @@ export async function dispatch(opts: DispatcherOpts): Promise<DispatchResult> {
 						logPath,
 					})
 					await eventLog.append(failedEvent)
-					commitState(reduceEvent(state, failedEvent))
+					let s = reduceEvent(state, failedEvent)
+					s = resetAgentCost(s, assignment.agentName)
+					s = reduceEvent(s, finalCostEvent)
+					commitState(s)
 				}
-
-				// Report usage for cost tracking.
-				// recordUsage writes a cost_update event to the log; we also need
-				// to reduce it into in-memory state (the tracker doesn't do that).
-				onUsage?.(assignment.agentName, model, result.usage)
-				// Reduce cost into live state (tracker writes to log; we update in-memory)
-				const { costUsd } = calculateCost(result.usage, model)
-				const costEvent = createFleetEvent<CostUpdateEvent>({
-					type: 'cost_update',
-					agentName: assignment.agentName,
-					inputTokens: result.usage.inputTokens,
-					outputTokens: result.usage.outputTokens,
-					costUsd,
-				})
-				commitState(reduceEvent(state, costEvent))
 
 				// Release worktree back to pool
 				if (releaseWorktree && worktreePath !== repoRoot) {
