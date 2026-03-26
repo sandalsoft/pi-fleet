@@ -100,6 +100,7 @@ function makeSpawnResult(
 			completedAt: null,
 			abortController: new AbortController(),
 			process: {} as any,
+			turnCount: 0,
 		},
 		report: `${agentName} report`,
 		usage: {

@@ -519,6 +519,7 @@ function buildSpawnResult(
 		completedAt: null,
 		abortController,
 		process: raw.process,
+		turnCount: 0, // turnCount is tracked via state events, not the runtime struct
 	}
 
 	return { runtime, report, usage, exitCode: raw.exitCode, stderr: raw.stderr, errorDetails }

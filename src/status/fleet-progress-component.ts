@@ -2,7 +2,7 @@ import type { Component, TUI } from '@mariozechner/pi-tui'
 import { truncateToWidth, visibleWidth } from '@mariozechner/pi-tui'
 import type { Theme, ThemeColor } from '@mariozechner/pi-coding-agent'
 import type { FleetState } from '../session/state.js'
-import { formatTokens, formatUsd, formatAgentElapsed, formatElapsed, collectAgentRows, type AgentRow } from './formatter.js'
+import { formatTokens, formatUsd, formatElapsed, collectAgentRows, type AgentRow } from './formatter.js'
 import type { ActivityStore } from './activity-store.js'
 
 // --- Configurable color mapping ---
@@ -20,7 +20,6 @@ export interface FleetWidgetColors {
 	barEmpty: ThemeColor
 	barLabel: ThemeColor
 	summary: ThemeColor
-	tree: ThemeColor
 }
 
 export const DEFAULT_COLORS: FleetWidgetColors = {
@@ -36,7 +35,6 @@ export const DEFAULT_COLORS: FleetWidgetColors = {
 	barEmpty: 'dim',
 	barLabel: 'muted',
 	summary: 'muted',
-	tree: 'dim',
 }
 
 // --- Status icons ---
@@ -45,26 +43,20 @@ const ICON_DONE = '\u2713'      // ✓
 const ICON_FAILED = '\u2717'    // ✗
 const ICON_QUEUED = '\u25cb'    // ○
 
-// --- Tree drawing ---
-const TREE_MID = '\u251c\u2500' // ├─
-const TREE_END = '\u2514\u2500' // └─
-
 // --- Progress bar characters ---
 const BAR_FILLED = '\u2593' // ▓
 const BAR_EMPTY = '\u2591'  // ░
 
 /**
  * TUI Component for rendering the fleet progress widget with theme colors.
- * Tree-style layout with per-agent activity shown inline.
+ * Two-column grid layout: agents are shown side-by-side, two per row.
+ * Each cell: icon  name  ~turns  cost  tokens
  */
 export class FleetProgressComponent implements Component {
 	private tui: TUI
 	private theme: Theme
 	private colors: FleetWidgetColors
 	private state: FleetState | null = null
-	private activityStore: ActivityStore | null = null
-	private errors: Map<string, string> = new Map()
-	private logPaths: Map<string, string> = new Map()
 	private cachedLines: string[] | null = null
 	private cachedWidth: number | null = null
 
@@ -74,13 +66,8 @@ export class FleetProgressComponent implements Component {
 		this.colors = { ...DEFAULT_COLORS, ...colors }
 	}
 
-	update(state: FleetState, activityStore?: ActivityStore | Map<string, string>, errors?: Map<string, string>, logPaths?: Map<string, string>): void {
+	update(state: FleetState, _activityStore?: ActivityStore | Map<string, string>, _errors?: Map<string, string>, _logPaths?: Map<string, string>): void {
 		this.state = state
-		if (activityStore && 'getRecentActivities' in activityStore) {
-			this.activityStore = activityStore as ActivityStore
-		}
-		if (errors) this.errors = errors
-		if (logPaths) this.logPaths = logPaths
 		this.invalidate()
 		this.tui.requestRender()
 	}
@@ -102,7 +89,6 @@ export class FleetProgressComponent implements Component {
 
 	dispose(): void {
 		this.state = null
-		this.activityStore = null
 	}
 
 	// --- Private rendering ---
@@ -113,7 +99,6 @@ export class FleetProgressComponent implements Component {
 		const c = this.colors
 		const lines: string[] = []
 		const agents = collectAgentRows(state)
-		// layoutWidth for column positioning; width for output truncation
 		const layoutWidth = Math.max(40, width)
 
 		// Header: full-width, left phase + right stats
@@ -127,49 +112,17 @@ export class FleetProgressComponent implements Component {
 		const headerPad = Math.max(1, layoutWidth - 4 - visibleWidth(headerLeft) - visibleWidth(headerRight))
 		lines.push(truncateToWidth(`  ${headerLeft}${' '.repeat(headerPad)}${headerRight}`, width, ''))
 
-		// Dynamic overhead: header(1) + summary(1) + bar lines (0/1/2)
-		let overheadLines = 2 // header + summary
-		if (state.constraints) {
-			// Determine bar layout: side-by-side vs stacked
-			const timeLabel = th.fg(c.barLabel, 'TIME')
-			const costLabel = th.fg(c.barLabel, 'COST')
-			const elapsedMs = this.elapsedMs(state.startedAt)
-			const timeStats = th.fg(c.stats, `${formatElapsed(elapsedMs)} / ${state.constraints.maxMinutes}m`)
-			const costStats = th.fg(c.stats, `${totalCost} / ${formatUsd(state.constraints.maxUsd)}`)
-
-			// Measure what fixed content consumes (labels + stats + spacing)
-			const fixedWidth = visibleWidth(timeLabel) + visibleWidth(timeStats) + visibleWidth(costLabel) + visibleWidth(costStats) + 12 // spaces/padding
-			const availableForBars = layoutWidth - fixedWidth
-			const minBarWidth = 8
-
-			if (availableForBars >= minBarWidth * 2) {
-				overheadLines = 3 // side-by-side (1 bar line)
+		// Two-column agent grid
+		const colWidth = Math.floor((layoutWidth - 2) / 2)
+		for (let i = 0; i < agents.length; i += 2) {
+			const left = agents[i]
+			const right = agents[i + 1]
+			const leftCell = this.renderAgentCell(left, colWidth)
+			if (right) {
+				const rightCell = this.renderAgentCell(right, colWidth)
+				lines.push(truncateToWidth(`  ${leftCell}${rightCell}`, width, ''))
 			} else {
-				overheadLines = 4 // stacked (2 bar lines)
-			}
-		}
-
-		// Dynamic height budget: cap total widget at ~18 lines
-		const MAX_WIDGET_LINES = 18
-		const maxSubItems = Math.max(1, Math.floor((MAX_WIDGET_LINES - agents.length - overheadLines) / Math.max(1, agents.length)))
-
-		// Agent tree with sub-items showing recent activity
-		for (let i = 0; i < agents.length; i++) {
-			const agent = agents[i]
-			const isLast = i === agents.length - 1
-			const treeBranch = th.fg(c.tree, isLast ? TREE_END : TREE_MID)
-			const treeVert = isLast ? '   ' : th.fg(c.tree, '\u2502  ') // │  or spaces
-
-			// Agent header row
-			lines.push(truncateToWidth(this.renderAgentRow(agent, layoutWidth, treeBranch), width, ''))
-
-			// Sub-tree: recent activities or error
-			const subItems = this.getAgentSubItems(agent, maxSubItems)
-			for (let j = 0; j < subItems.length; j++) {
-				const subIsLast = j === subItems.length - 1
-				const subBranch = th.fg(c.tree, subIsLast ? TREE_END : TREE_MID)
-				const subLine = `  ${treeVert}${subBranch} ${subItems[j]}`
-				lines.push(truncateToWidth(subLine, width, ''))
+				lines.push(truncateToWidth(`  ${leftCell}`, width, ''))
 			}
 		}
 
@@ -222,7 +175,11 @@ export class FleetProgressComponent implements Component {
 		return lines
 	}
 
-	private renderAgentRow(agent: AgentRow, _width: number, treeBranch: string): string {
+	/**
+	 * Render a single agent cell for the 2-column grid.
+	 * Format: icon  name (padded)  ~turns  cost  tokens
+	 */
+	private renderAgentCell(agent: AgentRow, colWidth: number): string {
 		const th = this.theme
 		const c = this.colors
 
@@ -236,63 +193,18 @@ export class FleetProgressComponent implements Component {
 		}
 
 		const coloredIcon = th.fg(iconColor, icon)
-		const name = truncateToWidth(agent.name, 14, '\u2026')
-		const coloredName = th.fg(c.agentName, name.padEnd(14))
+		const maxName = Math.max(8, colWidth - 26)
+		const name = truncateToWidth(agent.name, maxName, '\u2026').padEnd(maxName)
+		const coloredName = th.fg(c.agentName, name)
 
-		const cost = agent.costUsd > 0 ? formatUsd(agent.costUsd) : '-'
-		const tokens = agent.totalTokens > 0 ? formatTokens(agent.totalTokens) : '-'
-		const elapsed = formatAgentElapsed(agent.startedAt, agent.completedAt)
-		const statsBlock = th.fg(c.stats, `${cost.padStart(7)} ${tokens.padStart(6)} ${elapsed.padStart(7)}`)
+		const turns = `~${agent.turnCount}`.padStart(3)
+		const cost = (agent.costUsd > 0 ? formatUsd(agent.costUsd) : '-').padStart(6)
+		const tokens = (agent.totalTokens > 0 ? formatTokens(agent.totalTokens) : '-').padStart(5)
+		const statsBlock = th.fg(c.stats, `${turns}  ${cost}  ${tokens}`)
 
-		return `  ${treeBranch} ${coloredIcon} ${coloredName} ${statsBlock}`
-	}
-
-	/**
-	 * Get sub-tree items for an agent: recent activities, error, or status.
-	 * Returns themed strings ready to render.
-	 */
-	private getAgentSubItems(agent: AgentRow, maxItems: number): string[] {
-		const th = this.theme
-		const c = this.colors
-
-		// Failed: show error + log path
-		if (agent.status === 'failed') {
-			const items: string[] = []
-			const error = this.errors.get(agent.name)
-			if (error) {
-				const firstLine = error.split('\n')[0] ?? 'unknown error'
-				items.push(th.fg(c.statusFailed, truncateToWidth(firstLine, 70, '\u2026')))
-			} else {
-				items.push(th.fg(c.statusFailed, 'failed'))
-			}
-			const logPath = this.logPaths.get(agent.name)
-			if (logPath) {
-				const label = `log: ${logPath}`
-				items.push(th.fg(c.activity, truncateToWidth(label, 70, '\u2026')))
-			}
-			return items
-		}
-
-		// Queued: just show waiting
-		if (agent.status === 'queued') {
-			return [th.fg(c.statusQueued, 'waiting')]
-		}
-
-		// Running/completed: show recent activities from store
-		if (this.activityStore) {
-			const recent = this.activityStore.getRecentActivities(agent.name, maxItems)
-			if (recent.length > 0) {
-				return recent.map((entry) => {
-					return th.fg(c.activity, truncateToWidth(entry.text, 70, '\u2026'))
-				})
-			}
-		}
-
-		// No activities recorded
-		if (agent.status === 'completed') {
-			return [th.fg(c.statusDone, 'done')]
-		}
-		return [th.fg(c.activity, 'starting...')]
+		// Pad the whole cell to colWidth so the two columns align
+		const rawCell = `${coloredIcon} ${coloredName} ${statsBlock}`
+		return rawCell.padEnd(colWidth)
 	}
 
 	private renderBar(ratio: number, barWidth: number): string {

@@ -6,7 +6,7 @@ import { truncateToWidth } from '@mariozechner/pi-tui'
  *
  * Produces a compact, information-dense widget showing:
  * - Phase header with total cost
- * - Two-column agent grid with status icons, cost, and token counts
+ * - Two-column agent grid with status icons, turn count, cost, and token counts
  * - Time and budget progress bars
  * - Completion summary
  */
@@ -22,10 +22,6 @@ const ICON = {
 // --- Progress bar characters ---
 const BAR_FILLED = '\u2593' // ▓
 const BAR_EMPTY = '\u2591'  // ░
-
-// --- Tree drawing ---
-const TREE_MID = '\u251c\u2500' // ├─
-const TREE_END = '\u2514\u2500' // └─
 
 // --- Formatting helpers ---
 
@@ -91,45 +87,8 @@ export function progressBar(ratio: number, width: number = 18): string {
 	return BAR_FILLED.repeat(filled) + BAR_EMPTY.repeat(width - filled)
 }
 
-
 function statusIcon(status: 'running' | 'completed' | 'failed' | 'queued'): string {
 	return ICON[status] ?? ICON.queued
-}
-
-/**
- * Format a single agent as a full-width tree row:
- *   ├─ ● developer      $1.50  7.0k  reading src/config/schema.ts
- */
-function formatAgentTreeRow(
-	agent: AgentRow,
-	isLast: boolean,
-	activity: string | undefined,
-	error: string | undefined,
-	logPath: string | undefined,
-): string {
-	const branch = isLast ? TREE_END : TREE_MID
-	const icon = statusIcon(agent.status)
-	const name = truncateToWidth(agent.name, 14, '\u2026').padEnd(14)
-	const cost = agent.costUsd > 0 ? formatUsd(agent.costUsd) : '-'
-	const tokens = agent.totalTokens > 0 ? formatTokens(agent.totalTokens) : '-'
-	const elapsed = formatAgentElapsed(agent.startedAt, agent.completedAt)
-	const prefix = `  ${branch} ${icon} ${name} ${cost.padStart(7)} ${tokens.padStart(6)} ${elapsed.padStart(7)}`
-
-	if (activity && agent.status === 'running') {
-		return `${prefix}  ${truncateToWidth(activity, 50, '\u2026')}`
-	}
-	if (agent.status === 'failed') {
-		const errorStr = error
-			? truncateToWidth(error.split('\n')[0] ?? 'unknown error', 60, '\u2026')
-			: 'failed'
-		if (logPath) {
-			const label = `log: ${logPath}`
-			return `${prefix}  ${errorStr}  ${truncateToWidth(label, 70, '\u2026')}`
-		}
-		return `${prefix}  ${errorStr}`
-	}
-	if (agent.status === 'queued') return `${prefix}  waiting`
-	return prefix
 }
 
 export interface AgentRow {
@@ -137,6 +96,7 @@ export interface AgentRow {
 	status: 'running' | 'completed' | 'failed' | 'queued'
 	costUsd: number
 	totalTokens: number
+	turnCount: number
 	startedAt: string | null
 	completedAt: string | null
 }
@@ -154,6 +114,7 @@ export function collectAgentRows(state: FleetState): AgentRow[] {
 			status: spec.status,
 			costUsd: cost?.costUsd ?? 0,
 			totalTokens: (cost?.inputTokens ?? 0) + (cost?.outputTokens ?? 0),
+			turnCount: spec.turnCount,
 			startedAt: spec.startedAt,
 			completedAt: spec.completedAt,
 		})
@@ -162,7 +123,7 @@ export function collectAgentRows(state: FleetState): AgentRow[] {
 	// Queued agents (in members list but not started)
 	for (const name of state.members) {
 		if (!seen.has(name)) {
-			rows.push({ name, status: 'queued', costUsd: 0, totalTokens: 0, startedAt: null, completedAt: null })
+			rows.push({ name, status: 'queued', costUsd: 0, totalTokens: 0, turnCount: 0, startedAt: null, completedAt: null })
 		}
 	}
 
@@ -170,13 +131,32 @@ export function collectAgentRows(state: FleetState): AgentRow[] {
 }
 
 /**
+ * Format a single agent cell for the 2-column grid (plain text, no ANSI).
+ * Format: icon  name (padded)  ~turns  cost  tokens
+ */
+function formatAgentCell(agent: AgentRow, colWidth: number): string {
+	const icon = statusIcon(agent.status)
+	const maxName = Math.max(8, colWidth - 26)
+	const name = agent.name.length > maxName
+		? truncateToWidth(agent.name, maxName, '\u2026')
+		: agent.name.padEnd(maxName)
+	const turns = `~${agent.turnCount}`.padStart(3)
+	const cost = (agent.costUsd > 0 ? formatUsd(agent.costUsd) : '-').padStart(6)
+	const tokens = (agent.totalTokens > 0 ? formatTokens(agent.totalTokens) : '-').padStart(5)
+	const cell = `${icon} ${name} ${turns}  ${cost}  ${tokens}`
+	return cell.padEnd(colWidth)
+}
+
+/**
  * Format FleetState into string[] for setWidget rendering.
- * Tree-style layout with per-agent activity shown inline.
+ * Two-column grid layout: agents shown side-by-side, two per row.
  * Fallback for environments without TUI component support.
  */
-export function formatStatusTable(state: FleetState, activities?: Map<string, string>, errors?: Map<string, string>, logPaths?: Map<string, string>): string[] {
+export function formatStatusTable(state: FleetState, _activities?: Map<string, string>, _errors?: Map<string, string>, _logPaths?: Map<string, string>): string[] {
 	const lines: string[] = []
 	const agents = collectAgentRows(state)
+	const TOTAL_WIDTH = 80
+	const colWidth = Math.floor(TOTAL_WIDTH / 2)
 
 	// Header
 	const phaseLabel = state.phase.charAt(0).toUpperCase() + state.phase.slice(1)
@@ -185,17 +165,15 @@ export function formatStatusTable(state: FleetState, activities?: Map<string, st
 	const totalTokens = agents.reduce((sum, a) => sum + a.totalTokens, 0)
 	const tokensStr = totalTokens > 0 ? `  ${formatTokens(totalTokens)} tok` : ''
 	const rightSide = `${totalCost}${budgetStr}${tokensStr}`
-	lines.push(`  Fleet [${phaseLabel}]${' '.repeat(Math.max(1, 60 - phaseLabel.length - rightSide.length))}${rightSide}`)
+	const headerLeft = `Fleet [${phaseLabel}]`
+	const pad = Math.max(1, TOTAL_WIDTH - headerLeft.length - rightSide.length)
+	lines.push(`  ${headerLeft}${' '.repeat(pad)}${rightSide}`)
 
-	// Agent tree rows with inline activity and error messages
-	for (let i = 0; i < agents.length; i++) {
-		const agent = agents[i]
-		const isLast = i === agents.length - 1
-		const activity = activities?.get(agent.name)
-		const displayActivity = activity ? truncateToWidth(activity, 50, '\u2026') : undefined
-		const error = errors?.get(agent.name)
-		const logPath = logPaths?.get(agent.name)
-		lines.push(formatAgentTreeRow(agent, isLast, displayActivity, error, logPath))
+	// Two-column agent grid
+	for (let i = 0; i < agents.length; i += 2) {
+		const left = formatAgentCell(agents[i], colWidth)
+		const right = agents[i + 1] ? formatAgentCell(agents[i + 1], colWidth) : ''
+		lines.push(`  ${left}${right}`.trimEnd())
 	}
 
 	// Progress bars

@@ -24,6 +24,8 @@ export interface SpecialistRecord {
 	startedAt: string | null
 	completedAt: string | null
 	hostRoutableId?: string
+	/** Number of LLM turns completed (incremented on each cost_update event). */
+	turnCount: number
 }
 
 // --- Per-agent cost tracking ---
@@ -144,6 +146,7 @@ export function reduceEvent(state: FleetState, event: FleetEvent): FleetState {
 				status: 'running',
 				startedAt: known.timestamp,
 				completedAt: null,
+				turnCount: 0,
 			})
 			return { ...state, specialists }
 		}
@@ -214,7 +217,16 @@ export function reduceEvent(state: FleetState, event: FleetEvent): FleetState {
 				(sum, c) => sum + c.costUsd,
 				0
 			)
-			return { ...state, costs, totalCostUsd }
+			// Increment turn count for the specialist if it exists
+			const specialists = new Map(state.specialists)
+			const specRecord = specialists.get(known.agentName)
+			if (specRecord) {
+				specialists.set(known.agentName, {
+					...specRecord,
+					turnCount: specRecord.turnCount + 1,
+				})
+			}
+			return { ...state, costs, totalCostUsd, specialists }
 		}
 
 		case 'merge_started':

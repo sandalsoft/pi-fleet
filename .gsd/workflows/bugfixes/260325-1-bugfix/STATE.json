@@ -1,0 +1,32 @@
+{
+  "template": "bugfix",
+  "templateName": "Bug Fix",
+  "description": "",
+  "branch": "master",
+  "phases": [
+    {
+      "name": "triage",
+      "index": 0,
+      "status": "active"
+    },
+    {
+      "name": "fix",
+      "index": 1,
+      "status": "pending"
+    },
+    {
+      "name": "verify",
+      "index": 2,
+      "status": "pending"
+    },
+    {
+      "name": "ship",
+      "index": 3,
+      "status": "pending"
+    }
+  ],
+  "currentPhase": 0,
+  "startedAt": "2026-03-26T00:18:26.933Z",
+  "updatedAt": "2026-03-26T00:18:26.933Z",
+  "artifactDir": "/Users/eric/Development/code/Pi-Harness/pi-fleet/.gsd/workflows/bugfixes/260325-1-bugfix"
+}
