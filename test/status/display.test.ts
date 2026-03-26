@@ -124,6 +124,7 @@ describe('handleStatus', () => {
 			status: 'running',
 			startedAt: null,
 			completedAt: null,
+			turnCount: 0,
 		})
 		setFleetState(state)
 
@@ -198,6 +199,7 @@ describe('updateStatusLine', () => {
 			status: 'completed',
 			startedAt: null,
 			completedAt: null,
+			turnCount: 0,
 		})
 		state.totalCostUsd = 1.23
 		state.constraints = {
@@ -236,6 +238,7 @@ describe('updateProgressWidget', () => {
 			status: 'running',
 			startedAt: null,
 			completedAt: null,
+			turnCount: 0,
 		})
 		state.totalCostUsd = 0.50
 

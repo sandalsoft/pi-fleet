@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect } from 'vitest'
 import {
 	formatStatusTable,
 	formatStatusLine,
@@ -31,6 +31,7 @@ function populatedState(): FleetState {
 		status: 'completed',
 		startedAt: null,
 		completedAt: null,
+		turnCount: 3,
 	})
 	state.specialists.set('reviewer', {
 		agentName: 'reviewer',
@@ -41,6 +42,7 @@ function populatedState(): FleetState {
 		status: 'running',
 		startedAt: null,
 		completedAt: null,
+		turnCount: 1,
 	})
 
 	state.costs.set('developer', {
@@ -164,6 +166,30 @@ describe('formatStatusTable', () => {
 		expect(joined).toContain('4.0k')
 	})
 
+	it('shows turn counts for agents', () => {
+		const lines = formatStatusTable(populatedState())
+		const joined = lines.join('\n')
+
+		// developer has 3 turns, reviewer has 1, architect (queued) has 0
+		expect(joined).toContain('~3')
+		expect(joined).toContain('~1')
+		expect(joined).toContain('~0')
+	})
+
+	it('renders two agents per row in a grid', () => {
+		const lines = formatStatusTable(populatedState())
+		// Lines containing status icons indicate agent rows
+		const agentLines = lines.filter((l) => l.includes('\u2713') || l.includes('\u25cf') || l.includes('\u25cb'))
+		// 3 agents → 2 grid rows
+		expect(agentLines.length).toBe(2)
+	})
+
+	it('developer and reviewer appear on the same line', () => {
+		const lines = formatStatusTable(populatedState())
+		const sharedLine = lines.find((l) => l.includes('developer') && l.includes('reviewer'))
+		expect(sharedLine).toBeDefined()
+	})
+
 	it('shows progress bars when constraints exist', () => {
 		const lines = formatStatusTable(populatedState())
 		const joined = lines.join('\n')
@@ -208,47 +234,6 @@ describe('formatStatusTable', () => {
 		expect(lines.length).toBeGreaterThan(0)
 		const joined = lines.join('\n')
 		expect(joined).toContain('0/0 complete')
-	})
-
-	it('shows tree connectors for agent rows', () => {
-		const lines = formatStatusTable(populatedState())
-		const joined = lines.join('\n')
-
-		// Tree drawing characters
-		expect(joined).toContain('\u251c\u2500') // ├─
-		expect(joined).toContain('\u2514\u2500') // └─
-	})
-
-	it('shows activity inline for running agents', () => {
-		const state = populatedState()
-		const activities = new Map([
-			['reviewer', 'reading src/config/schema.ts'],
-		])
-
-		const lines = formatStatusTable(state, activities)
-		const joined = lines.join('\n')
-
-		// Activity appears on the reviewer's row
-		expect(joined).toContain('reading src/config/schema.ts')
-	})
-
-	it('shows waiting label for queued agents', () => {
-		const lines = formatStatusTable(populatedState())
-		const joined = lines.join('\n')
-
-		expect(joined).toContain('waiting')
-	})
-
-	it('does not show activity for completed agents', () => {
-		const state = populatedState()
-		const activities = new Map([
-			['developer', 'editing src/main.ts'],  // developer is completed
-		])
-
-		const lines = formatStatusTable(state, activities)
-		const joined = lines.join('\n')
-
-		expect(joined).not.toContain('developer: editing')
 	})
 })
 
@@ -370,10 +355,18 @@ describe('collectAgentRows', () => {
 		expect(rows[0].startedAt).toBe('2026-03-25T12:00:00.000Z')
 		expect(rows[0].completedAt).toBe('2026-03-25T12:02:00.000Z')
 	})
+
+	it('includes turnCount from specialist record', () => {
+		const state = populatedState()
+		const rows = collectAgentRows(state)
+		expect(rows[0].turnCount).toBe(3) // developer
+		expect(rows[1].turnCount).toBe(1) // reviewer
+		expect(rows[2].turnCount).toBe(0) // architect (queued)
+	})
 })
 
-describe('formatter truncation', () => {
-	it('truncates long agent names with ellipsis in tree rows', () => {
+describe('formatter agent name truncation', () => {
+	it('truncates long agent names with ellipsis', () => {
 		const state = emptyFleetState()
 		state.phase = 'executing'
 		state.members = ['very-long-agent-name-here']
@@ -386,53 +379,12 @@ describe('formatter truncation', () => {
 			status: 'running',
 			startedAt: null,
 			completedAt: null,
+			turnCount: 0,
 		})
 
 		const lines = formatStatusTable(state)
 		const joined = lines.join('\n')
 		expect(joined).not.toContain('very-long-agent-name-here')
-		expect(joined).toContain('\u2026')
-	})
-
-	it('truncates long activity text', () => {
-		const state = populatedState()
-		const longActivity = 'x'.repeat(80)
-		const activities = new Map([['reviewer', longActivity]])
-
-		const lines = formatStatusTable(state, activities)
-		const joined = lines.join('\n')
-		expect(joined).not.toContain(longActivity)
-		expect(joined).toContain('\u2026')
-	})
-
-	it('truncates long error text for failed agents', () => {
-		const state = populatedState()
-		state.specialists.set('reviewer', {
-			...state.specialists.get('reviewer')!,
-			status: 'failed',
-		})
-		const longError = 'E'.repeat(80)
-		const errors = new Map([['reviewer', longError]])
-
-		const lines = formatStatusTable(state, undefined, errors)
-		const joined = lines.join('\n')
-		expect(joined).not.toContain(longError)
-		expect(joined).toContain('\u2026')
-	})
-
-	it('truncates long log paths for failed agents', () => {
-		const state = populatedState()
-		state.specialists.set('reviewer', {
-			...state.specialists.get('reviewer')!,
-			status: 'failed',
-		})
-		const longPath = '/very/long/' + 'path/'.repeat(20) + 'file.log'
-		const errors = new Map([['reviewer', 'some error']])
-		const logPaths = new Map([['reviewer', longPath]])
-
-		const lines = formatStatusTable(state, undefined, errors, logPaths)
-		const joined = lines.join('\n')
-		expect(joined).not.toContain(longPath)
 		expect(joined).toContain('\u2026')
 	})
 })

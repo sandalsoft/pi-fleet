@@ -32,6 +32,7 @@ function runningState(): FleetState {
 		status: 'running',
 		startedAt: null,
 		completedAt: null,
+		turnCount: 0,
 	})
 	state.specialists.set('reviewer', {
 		agentName: 'reviewer',
@@ -42,6 +43,7 @@ function runningState(): FleetState {
 		status: 'running',
 		startedAt: null,
 		completedAt: null,
+		turnCount: 0,
 	})
 	state.specialists.set('architect', {
 		agentName: 'architect',
@@ -52,6 +54,7 @@ function runningState(): FleetState {
 		status: 'completed',
 		startedAt: null,
 		completedAt: null,
+		turnCount: 2,
 	})
 	return state
 }

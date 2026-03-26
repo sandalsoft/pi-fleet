@@ -45,6 +45,7 @@ function makeSpawnResult(report: string, status: 'completed' | 'failed' = 'compl
 			completedAt: null,
 			abortController: new AbortController(),
 			process: {} as never,
+			turnCount: 0,
 		},
 		report,
 		usage: {

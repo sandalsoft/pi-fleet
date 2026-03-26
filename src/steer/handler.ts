@@ -92,6 +92,7 @@ export function resolveTargets(
 					status: 'running',
 					startedAt: null,
 					completedAt: null,
+					turnCount: 0,
 				},
 			],
 			error: null,

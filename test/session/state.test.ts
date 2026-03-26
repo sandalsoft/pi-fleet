@@ -122,6 +122,7 @@ describe('reconstructState from event sequences', () => {
 		expect(dev.status).toBe('running')
 		expect(dev.startedAt).toBe(ts)
 		expect(dev.completedAt).toBeNull()
+		expect(dev.turnCount).toBe(0)
 	})
 
 	it('specialist_completed updates status and tracks completion', () => {
@@ -168,6 +169,29 @@ describe('reconstructState from event sequences', () => {
 		expect(devCost.costUsd).toBeCloseTo(0.13)
 		expect(state.costs.get('reviewer')!.costUsd).toBeCloseTo(0.02)
 		expect(state.totalCostUsd).toBeCloseTo(0.15)
+	})
+
+	it('cost_update increments turnCount for known specialists', () => {
+		const events = [
+			sessionStart, interviewComplete, teamSelected, taskGraphCreated, specialistStarted,
+			ev({ type: 'cost_update', agentName: 'developer', inputTokens: 500, outputTokens: 200, costUsd: 0.02 }),
+			ev({ type: 'cost_update', agentName: 'developer', inputTokens: 600, outputTokens: 250, costUsd: 0.03 }),
+		]
+		const state = reconstructState(events)
+		const dev = state.specialists.get('developer')!
+		expect(dev.turnCount).toBe(2)
+	})
+
+	it('cost_update for unknown agent does not crash and leaves specialists unchanged', () => {
+		const events = [
+			sessionStart,
+			ev({ type: 'cost_update', agentName: 'ghost', inputTokens: 100, outputTokens: 50, costUsd: 0.01 }),
+		]
+		const state = reconstructState(events)
+		// costs are still tracked even for agents not yet started
+		expect(state.costs.get('ghost')!.costUsd).toBeCloseTo(0.01)
+		// specialists map remains empty (no specialist_started fired)
+		expect(state.specialists.size).toBe(0)
 	})
 
 	it('merge flow transitions phase correctly', () => {
